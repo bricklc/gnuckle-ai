@@ -115,11 +115,13 @@ where to run it, yes, good:
 have existing clone, yes, good. no need re-clone every time.
 
 ```bash
+gnuckle --update
 gnuckle-update
 ```
 
 this helper runs from the gnuckle repo root and does:
 
+- clears stale tracked Python cache files from older clones
 - `git pull --ff-only`
 - `npm install`
 - `python -m pip install -e .`

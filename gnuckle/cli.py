@@ -33,6 +33,13 @@ def cmd_visualize(args):
     run_visualize(args.results_dir)
 
 
+def cmd_update(_args):
+    """Update gnuckle in place."""
+    from gnuckle.update import run_update
+
+    raise SystemExit(run_update())
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="gnuckle",
@@ -43,6 +50,11 @@ def main():
         "--version",
         action="version",
         version=f"gnuckle {__version__}",
+    )
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="update this gnuckle clone in place",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="available commands")
@@ -120,6 +132,9 @@ def main():
         argcomplete.autocomplete(parser)
 
     args = parser.parse_args()
+
+    if args.update:
+        cmd_update(args)
 
     if args.command is None:
         print_splash()
