@@ -227,6 +227,26 @@ def make_tool_result_message(tool_call_id, name, ok, content, error_type=None, d
         "content": json.dumps(payload, ensure_ascii=True),
     }
 
+
+def summarize_tool_choice(tool_names, expected_tools, wrong_tool_calls, disallowed_tool_calls):
+    used = list(tool_names)
+    expected = list(expected_tools)
+    if not used:
+        return "none", "used=none", f"want={','.join(expected) if expected else 'none'}"
+    if disallowed_tool_calls:
+        status = "bad"
+    elif wrong_tool_calls:
+        status = "mixed"
+    else:
+        status = "good"
+    used_preview = ",".join(used[:3])
+    if len(used) > 3:
+        used_preview += ",..."
+    expected_preview = ",".join(expected[:3])
+    if len(expected) > 3:
+        expected_preview += ",..."
+    return status, f"used={used_preview}", f"want={expected_preview}"
+
 @lru_cache(maxsize=1)
 def load_presets():
     with PRESETS_PATH.open("r", encoding="utf-8") as f:
@@ -681,6 +701,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             break
 
         if result is None:
+            choice_status, used_preview, expected_preview = summarize_tool_choice([], expected_tools, 0, 0)
             messages.append(
                 {
                     "role": "assistant",
@@ -705,6 +726,9 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
                 "tool_calls_count":      0,
                 "tool_accuracy":         [],
                 "tool_accuracy_pct":     None,
+                "tool_choice_status":    choice_status,
+                "tool_choice_used_preview": used_preview,
+                "tool_choice_expected_preview": expected_preview,
                 "wrong_tool_calls":      0,
                 "unnecessary_tool_calls": 0,
                 "disallowed_tool_calls": 0,
@@ -721,6 +745,8 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             print(
                 f"  Turn {turn_idx + 1:02d} | "
                 f"tps=0.0  ttft=n/a  tok=0  tools=0  acc=N/A%  "
+                f"choice={choice_status}  "
+                f"{used_preview}  {expected_preview}  "
                 f"vram={vram_after}  error={turn_error}"
             )
             continue
@@ -768,6 +794,12 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             if selection_denominator
             else 1.0
         )
+        choice_status, used_preview, expected_preview = summarize_tool_choice(
+            [tc["function"]["name"] for tc in result["tool_calls"]],
+            expected_tools,
+            wrong_tool_calls,
+            disallowed_tool_calls,
+        )
         if invalid_tool_entries:
             results["aggregate"]["invalid_tool_call_turns"] += 1
             results["aggregate"]["tool_validation_failures"] += invalid_tool_entries
@@ -800,6 +832,9 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "tool_calls_count":      len(result["tool_calls"]),
             "tool_accuracy":         tool_accuracy,
             "tool_accuracy_pct":     acc_pct,
+            "tool_choice_status":    choice_status,
+            "tool_choice_used_preview": used_preview,
+            "tool_choice_expected_preview": expected_preview,
             "wrong_tool_calls":      wrong_tool_calls,
             "unnecessary_tool_calls": unnecessary_tool_calls,
             "disallowed_tool_calls": disallowed_tool_calls,
@@ -819,6 +854,9 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             f"tok={result['tokens']}  "
             f"tools={len(result['tool_calls'])}  "
             f"acc={acc_pct if acc_pct is not None else 'N/A'}%  "
+            f"choice={choice_status}  "
+            f"{used_preview}  "
+            f"{expected_preview}  "
             f"sel={tool_selection_precision:.2f}  "
             f"vram={vram_after}"
         )
