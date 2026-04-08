@@ -1,11 +1,11 @@
 Metadata-Version: 2.4
 Name: gnuckle
-Version: 0.1.0
+Version: 0.2.1
 Summary: Agentic AI benchmark for llama.cpp KV cache quantization. Accidentally GNU, intentionally simian.
 Author: Gnuckle AI
 License-Expression: MIT
-Project-URL: Homepage, https://github.com/gnuckle-ai/gnuckle
-Project-URL: Issues, https://github.com/gnuckle-ai/gnuckle/issues
+Project-URL: Homepage, https://github.com/bricklc/gnuckle-ai
+Project-URL: Issues, https://github.com/bricklc/gnuckle-ai/issues
 Keywords: benchmark,llama.cpp,turboquant,kv-cache,agentic,tool-calling
 Classifier: Development Status :: 3 - Alpha
 Classifier: Environment :: Console
@@ -14,4 +14,8 @@ Classifier: Intended Audience :: Science/Research
 Classifier: Programming Language :: Python :: 3
 Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
 Requires-Python: >=3.10
+License-File: LICENSE
 Requires-Dist: openai>=1.0.0
+Provides-Extra: completion
+Requires-Dist: argcomplete>=3.5.0; extra == "completion"
+Dynamic: license-file
