@@ -38,4 +38,4 @@ Issues = "https://github.com/bricklc/gnuckle-ai/issues"
 include = ["gnuckle*"]
 
 [tool.setuptools.package-data]
-gnuckle = ["*.json"]
+gnuckle = ["*.json", "fixtures/*/*"]

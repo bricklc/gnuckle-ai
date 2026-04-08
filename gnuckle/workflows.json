@@ -1,0 +1,44 @@
+{
+  "suites": {
+    "default": [
+      "coding_fix_001"
+    ]
+  },
+  "workflows": [
+    {
+      "workflow_id": "coding_fix_001",
+      "title": "Fix a failing greeting assertion",
+      "slice": "coding",
+      "difficulty": "easy",
+      "system_prompt": "You are Gnuckle, a careful local coding agent. Use tools, inspect the workspace, fix the failing test, run verification, then call finish. Do not claim success before tests pass.",
+      "fixture": "fix_greeting",
+      "event": {
+        "event_type": "interactive_request",
+        "payload": {
+          "text": "A small Python workspace has one failing test. Read the files, fix the bug, run the test, and then finish with a short summary."
+        }
+      },
+      "allowed_tools": [
+        "read_file",
+        "edit_file",
+        "run_test",
+        "finish"
+      ],
+      "max_turns": 8,
+      "timeout_s": 180,
+      "verification": {
+        "required": true,
+        "method": "run_test",
+        "command": [
+          "python",
+          "-m",
+          "unittest",
+          "-q"
+        ]
+      },
+      "success_rule": {
+        "type": "test_pass"
+      }
+    }
+  ]
+}

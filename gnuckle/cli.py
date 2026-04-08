@@ -16,6 +16,7 @@ def cmd_benchmark(args):
     from gnuckle.benchmark import run_full_benchmark
 
     run_full_benchmark(
+        benchmark_mode=args.mode,
         model_path=args.model,
         server_path=args.server,
         scan_dir=args.scan_dir,
@@ -23,6 +24,8 @@ def cmd_benchmark(args):
         num_turns=args.turns,
         port=args.port,
         profile_path=args.profile,
+        workflow_suite=args.workflow_suite,
+        session_mode=args.session_mode,
     )
 
 
@@ -64,6 +67,12 @@ def main():
         aliases=["run", "bench"],
         help="run the agentic KV cache benchmark",
         description="Benchmark llama.cpp KV cache quantization on agentic tool-calling workloads.",
+    )
+    bench.add_argument(
+        "--mode",
+        choices=["legacy", "agentic"],
+        default=None,
+        help="benchmark mode (default: legacy)",
     )
     bench.add_argument(
         "--model",
@@ -111,6 +120,18 @@ def main():
         type=str,
         default=None,
         help="path to a gnuckle profile JSON file",
+    )
+    bench.add_argument(
+        "--workflow-suite",
+        type=str,
+        default=None,
+        help="agentic workflow suite name (default: default)",
+    )
+    bench.add_argument(
+        "--session-mode",
+        choices=["fresh_session", "full_history"],
+        default=None,
+        help="agentic session reuse mode",
     )
     bench.set_defaults(func=cmd_benchmark)
 

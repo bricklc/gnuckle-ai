@@ -33,6 +33,9 @@ API_KEY          = "none"
 MODEL            = "local-model"
 DEFAULT_TURNS    = 20
 DEFAULT_PORT     = 8080
+DEFAULT_BENCHMARK_MODE = "legacy"
+DEFAULT_WORKFLOW_SUITE = "default"
+DEFAULT_SESSION_MODE = "fresh_session"
 SERVER_WAIT_S    = 60
 WARMUP_WAIT_S    = 120
 PRESETS_PATH     = Path(__file__).with_name("llama_presets.json")
@@ -638,30 +641,107 @@ def interactive_setup(scan_dir=None):
 
     return model_path, server_path
 
+
+def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset=None,
+                               workflow_suite=DEFAULT_WORKFLOW_SUITE, session_mode=DEFAULT_SESSION_MODE,
+                               max_turns=None, system_prompt=None):
+    from gnuckle.agentic_runtime import build_agentic_run_summary, run_agentic_episode
+    from gnuckle.workflow_loader import load_workflow_suite
+
+    workflows = load_workflow_suite(workflow_suite)
+    if not workflows:
+        raise ValueError(f"workflow suite has no workflows: {workflow_suite}")
+
+    workflow = workflows[0]
+    print_step(f"workflow: {workflow.workflow_id} ({workflow.title})")
+    print_step(f"session: {session_mode}")
+    episode, _workspace_dir = run_agentic_episode(
+        base_url=DEFAULT_BASE_URL.format(port=port),
+        workflow=workflow,
+        output_dir=output_dir,
+        request_args=(preset or {}).get("request_args", {}),
+        session_mode=session_mode,
+        max_turns_override=max_turns,
+        system_prompt_override=system_prompt,
+    )
+    summary, out_path = build_agentic_run_summary(
+        workflow=workflow,
+        episode=episode,
+        model_name=model_path.name,
+        cache_label=cache_label,
+        session_mode=session_mode,
+        output_dir=output_dir,
+        workflow_suite=workflow_suite,
+    )
+    print(
+        f"  Episode | status={episode['status']}  "
+        f"success={episode['task_completed']}  "
+        f"verify={episode['verification_passed']}  "
+        f"turns={episode['turns_used']}  "
+        f"tools={episode['tool_calls_used']}  "
+        f"ms={episode['performance']['wall_clock_ms']}"
+    )
+    print(
+        f"  Scores  | episode={episode['scores']['episode_score']:.3f}  "
+        f"task={episode['scores']['task_success']:.3f}  "
+        f"verify={episode['scores']['verification']:.3f}  "
+        f"eff={episode['scores']['efficiency']:.3f}"
+    )
+    print_step(f"saved: {out_path.name}")
+    return out_path
+
+
+def _print_run_banner(benchmark_mode, model_path, server_path, output_path, preset,
+                      cache_configs, num_turns, workflow_suite, session_mode, system_prompt):
+    print(f"\n  Mode   : {benchmark_mode}")
+    print(f"  Model  : {model_path.name}")
+    print(f"  Server : {server_path}")
+    if benchmark_mode == "legacy":
+        print(f"  Turns  : {num_turns} per cache type")
+    else:
+        print(f"  Turns  : {num_turns} max agent turns")
+        print(f"  Suite  : {workflow_suite}")
+        print(f"  Session: {session_mode}")
+    print(f"  Runs   : {len(cache_configs)} ({', '.join(c['label'] for c in cache_configs)})")
+    print(f"  Output : {output_path}{os.sep}")
+    print(f"  Preset : {preset.get('name', 'default')} - {preset.get('description', '')}")
+    if system_prompt:
+        print("  System : custom prompt loaded")
+    ape_print("loading")
+    print()
+
 # ── FULL BENCHMARK ORCHESTRATOR ──────────────────────────────────────────────
-def run_full_benchmark(model_path=None, server_path=None, scan_dir=None,
-                       output_dir=None, num_turns=None, port=None, profile_path=None):
+def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, scan_dir=None,
+                       output_dir=None, num_turns=None, port=None, profile_path=None,
+                       workflow_suite=None, session_mode=None):
     profile = {}
     if profile_path:
         profile = load_profile(profile_path)
 
     if profile:
+        benchmark_mode = benchmark_mode or profile.get("benchmark_mode")
         model_path = model_path or profile.get("model_path")
         server_path = server_path or profile.get("server_path")
         scan_dir = scan_dir or profile.get("scan_dir")
         output_dir = output_dir or profile.get("output_dir")
         num_turns = num_turns if num_turns is not None else profile.get("num_turns")
         port = port if port is not None else profile.get("port")
+        workflow_suite = workflow_suite or profile.get("workflow_suite")
+        session_mode = session_mode or profile.get("session_mode")
         profile_preset = profile.get("sampler_preset")
         sampler_overrides = profile.get("sampler")
         cache_labels = profile.get("cache_types")
         system_prompt = profile.get("system_prompt")
     else:
+        benchmark_mode = benchmark_mode or DEFAULT_BENCHMARK_MODE
         profile_preset = None
         sampler_overrides = None
         cache_labels = None
         system_prompt = None
 
+    benchmark_mode = benchmark_mode or DEFAULT_BENCHMARK_MODE
+    workflow_suite = workflow_suite or DEFAULT_WORKFLOW_SUITE
+    session_mode = session_mode or DEFAULT_SESSION_MODE
     num_turns = num_turns if num_turns is not None else DEFAULT_TURNS
     port = port if port is not None else DEFAULT_PORT
     output_path = Path(output_dir) if output_dir else Path.cwd() / "benchmark_results"
@@ -681,16 +761,18 @@ def run_full_benchmark(model_path=None, server_path=None, scan_dir=None,
     if not cache_configs:
         cache_configs = CACHE_CONFIGS
 
-    print(f"\n  Model  : {model_path.name}")
-    print(f"  Server : {server_path}")
-    print(f"  Turns  : {num_turns} per cache type")
-    print(f"  Runs   : {len(cache_configs)} ({', '.join(c['label'] for c in cache_configs)})")
-    print(f"  Output : {output_path}{os.sep}")
-    print(f"  Preset : {preset.get('name', 'default')} - {preset.get('description', '')}")
-    if system_prompt:
-        print(f"  System : custom prompt loaded")
-    ape_print("loading")
-    print()
+    _print_run_banner(
+        benchmark_mode=benchmark_mode,
+        model_path=model_path,
+        server_path=server_path,
+        output_path=output_path,
+        preset=preset,
+        cache_configs=cache_configs,
+        num_turns=num_turns,
+        workflow_suite=workflow_suite,
+        session_mode=session_mode,
+        system_prompt=system_prompt,
+    )
 
     confirm = input("  ape smash Enter to start [y/n]: ").strip().lower()
     if confirm not in ("y", ""):
@@ -724,7 +806,28 @@ def run_full_benchmark(model_path=None, server_path=None, scan_dir=None,
                 continue
 
             try:
-                out = run_benchmark_pass(label, model_path, output_path, num_turns, port, preset=preset, system_prompt=system_prompt)
+                if benchmark_mode == "agentic":
+                    out = run_agentic_benchmark_pass(
+                        label,
+                        model_path,
+                        output_path,
+                        port,
+                        preset=preset,
+                        workflow_suite=workflow_suite,
+                        session_mode=session_mode,
+                        max_turns=num_turns,
+                        system_prompt=system_prompt,
+                    )
+                else:
+                    out = run_benchmark_pass(
+                        label,
+                        model_path,
+                        output_path,
+                        num_turns,
+                        port,
+                        preset=preset,
+                        system_prompt=system_prompt,
+                    )
                 output_files.append(out)
             except Exception as e:
                 print(f"  ERROR during benchmark [{label}]: {e}")
@@ -747,5 +850,8 @@ def run_full_benchmark(model_path=None, server_path=None, scan_dir=None,
     for f in output_files:
         print(f"  {f.name}")
     print(f"\n  results in: {output_path}{os.sep}")
-    print(f"  next step: gnuckle visualize {output_path}{os.sep}")
+    if benchmark_mode == "legacy":
+        print(f"  next step: gnuckle visualize {output_path}{os.sep}")
+    else:
+        print("  next step: inspect the agentic run json. ape read trace carefully.")
     print()
