@@ -1,5 +1,11 @@
 # GNUCKLE
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/readme/light.png">
+  <img alt="Gnuckle banner" src="assets/readme/light.png">
+</picture>
+
 ```
     ██████╗ ███╗   ██╗██╗   ██╗ ██████╗██╗  ██╗██╗     ███████╗
    ██╔════╝ ████╗  ██║██║   ██║██╔════╝██║ ██╔╝██║     ██╔════╝
