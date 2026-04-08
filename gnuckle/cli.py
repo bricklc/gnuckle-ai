@@ -36,7 +36,7 @@ def cmd_visualize(args):
 def main():
     parser = argparse.ArgumentParser(
         prog="gnuckle",
-        description="Gnuckle AI - Agentic AI Benchmark. ape drag knuckle on keyboard. benchmark happen.",
+        description=f"Gnuckle AI v{__version__} - Agentic AI Benchmark. ape drag knuckle on keyboard. benchmark happen.",
         epilog="accidentally GNU, intentionally simian.",
     )
     parser.add_argument(

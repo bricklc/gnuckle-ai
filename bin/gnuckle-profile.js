@@ -2,10 +2,17 @@
 
 const fs = require("fs");
 const path = require("path");
-const { prompt } = require("enquirer");
+const { version } = require(path.resolve(__dirname, "..", "package.json"));
 
 const PRESETS_PATH = path.resolve(__dirname, "..", "gnuckle", "llama_presets.json");
 const CACHE_TYPES = ["f16", "q8_0", "q4_0", "turbo3"];
+
+if (process.argv.includes("--version") || process.argv.includes("-v")) {
+  console.log(`gnuckle-profile ${version}`);
+  process.exit(0);
+}
+
+const { prompt } = require("enquirer");
 
 function readPresets() {
   return JSON.parse(fs.readFileSync(PRESETS_PATH, "utf8"));

@@ -2,6 +2,7 @@
 
 const { execSync } = require("child_process");
 const path = require("path");
+const { version } = require(path.resolve(__dirname, "..", "package.json"));
 
 const BANANA = "\u{1F34C}";
 const PKG_ROOT = path.resolve(__dirname, "..");
@@ -41,8 +42,13 @@ function findPythonCommand() {
 }
 
 function main() {
+  if (process.argv.includes("--version") || process.argv.includes("-v")) {
+    console.log(`gnuckle-update ${version}`);
+    return;
+  }
+
   console.log();
-  log("gnuckle update helper activated");
+  log(`gnuckle-update v${version} activated`);
   log(`updating clone at ${PKG_ROOT}`);
   log("user profiles in .gnuckle stay untouched");
   console.log();
