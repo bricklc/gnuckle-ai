@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "description": "Agentic AI benchmark for llama.cpp KV cache quantization. Accidentally GNU, intentionally simian.",
   "bin": {
-    "gnuckle": "./bin/gnuckle.js"
+    "gnuckle": "./bin/gnuckle.js",
+    "gnuckle-profile": "./bin/gnuckle-profile.js"
+  },
+  "dependencies": {
+    "enquirer": "^2.4.1"
   },
   "keywords": [
     "benchmark",

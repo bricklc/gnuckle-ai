@@ -37,11 +37,14 @@ keep the external source tree you build from synced to the latest upstream [`ggm
 
 - [Overview](#overview)
 - [Dependencies](#dependencies)
+- [First-Time Setup](#first-time-setup)
 - [Quick Start](#quick-start)
+- [Profile Editor](#profile-editor)
 - [Shell Completions](#shell-completions)
 - [What It Measures](#what-it-measures)
 - [Example Output](#example-output)
 - [Results](#results)
+- [Model Presets](#model-presets)
 - [How It Works](#how-it-works)
 - [Troubleshooting](#troubleshooting)
 - [Upstream References](#upstream-references)
@@ -66,6 +69,44 @@ keep the external source tree you build from synced to the latest upstream [`ggm
 - have `.gguf` model file, yes, good.
 - have CUDA-capable GPU if you are using a CUDA build, yes, good.
 - have `pip` for the Python install path, or `npm` for the wrapper package, yes, good.
+
+## First-Time Setup
+
+have first-time user, yes, good. use a terminal like PowerShell or Windows Terminal.
+set up in a working folder you control, yes, good. example:
+
+```powershell
+cd G:\2026 Projects
+git clone https://github.com/bricklc/gnuckle-ai.git
+cd gnuckle-ai
+```
+
+Then create a virtual environment and install locally:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\activate
+pip install -e .
+```
+
+have repo cloned, yes, good. have local install, yes, good. ape ready.
+
+If you prefer Conda, use this instead:
+
+```powershell
+conda create -n gnuckle python=3.10 -y
+conda activate gnuckle
+pip install -e .
+```
+
+have conda env, yes, good. ape also ready.
+
+where to run it, yes, good:
+
+- install gnuckle wherever you want
+- run it from the root of your llama.cpp fork so it can find root-level `.gguf` files
+- if your models live in `models/` or `gguf/`, gnuckle looks there too
+- if your files live somewhere else, pass `--scan-dir` or `--model`
 
 ## Quick Start 🍌
 
@@ -102,7 +143,7 @@ have npm package, yes, good. it runs the Python CLI through a local venv.
 
 ```bash
 git clone https://github.com/bricklc/gnuckle-ai
-cd gnuckle
+cd gnuckle-ai
 pip install -e .
 ```
 
@@ -155,6 +196,45 @@ ape see phrases. ape see numbers. dis is normal. dis is de way.
 have JSON files there, yes, good. open. look at numbers. numbers good. ape happy.
 
 numbers bad. ape learn. also good.
+
+## Profile Editor
+
+have separate profile editor, yes, good.
+run `gnuckle-profile` to edit benchmark settings without touching the main benchmark command.
+have npm install in repo first, yes, good. profile editor lives on the Node side.
+
+it lets ape:
+
+- select which model profile to edit
+- set sampler values like `temp`, `top-p`, `top-k`, `repeat-penalty`, `repeat-last-n`, and `min-p`
+- choose which cache types to benchmark with checkbox-style prompts
+- add a custom system prompt
+- save everything to a JSON profile for later runs
+
+example:
+
+```bash
+gnuckle-profile
+gnuckle benchmark --profile ./gnuckle.profile.json
+```
+
+## Model Presets 🧠🌴
+
+have model presets, yes, good. gnuckle auto-picks a llama.cpp sampler baseline from `gnuckle/llama_presets.json`.
+
+- looks at the model filename
+- chooses a starter profile like `qwen`, `gemma`, `nemotron`, `glm`, or `bonsai`
+- applies llama.cpp command-line flags like `--temp`, `--top-p`, `--top-k`, `--repeat-penalty`, `--repeat-last-n`, and `--min-p`
+- records the selected preset in each benchmark JSON
+
+have no matching filename, yes, good. gnuckle uses the default preset.
+these are starter values, inferred from common llama.cpp command-line patterns, and easy to edit if your model card says otherwise.
+
+Example llama.cpp server command:
+
+```bash
+llama-server -m model.gguf --temp 0.7 --top-p 0.8 --top-k 20 --repeat-penalty 1.05 --repeat-last-n 128 --min-p 0.0
+```
 
 ## Shell Completions 🧩
 
@@ -286,11 +366,14 @@ gnuckle/
   __main__.py        # python -m gnuckle
   cli.py             # CLI. benchmark. visualize. help.
   benchmark.py       # engine. the banana.
+  profile.py         # profile loader for saved benchmark configs
   splash.py          # ASCII art. pretty.
   ape.py             # loading phrases. important.
   visualize.py       # HTML dashboard generator
+  llama_presets.json # llama.cpp sampler presets
 bin/
   gnuckle.js         # npm wrapper. javascript is banana peel.
+  gnuckle-profile.js # separate profile editor
 pyproject.toml       # pip install
 package.json         # npm install
 README.md            # this file

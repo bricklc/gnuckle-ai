@@ -10,11 +10,14 @@ import sys
 import os
 import signal
 import socket
+import copy
 from pathlib import Path
 from datetime import datetime
+from functools import lru_cache
 from openai import OpenAI
 
 from gnuckle.ape import ape_print, ape_wait, ape_phrase
+from gnuckle.profile import load_profile
 
 # ── CACHE CONFIGS TO RUN ──────────────────────────────────────────────────────
 CACHE_CONFIGS = [
@@ -30,7 +33,13 @@ API_KEY          = "none"
 MODEL            = "local-model"
 DEFAULT_TURNS    = 20
 DEFAULT_PORT     = 8080
-SERVER_WAIT_S    = 15
+SERVER_WAIT_S    = 60
+PRESETS_PATH     = Path(__file__).with_name("llama_presets.json")
+DEFAULT_SYSTEM_PROMPT = (
+    "You are a function-calling AI assistant. "
+    "Always call the appropriate tool(s) before responding. "
+    "Return tool calls as valid JSON."
+)
 
 # ── TOOL DEFINITIONS ──────────────────────────────────────────────────────────
 TOOLS = [
@@ -150,6 +159,60 @@ def print_header(text):
 def print_step(text):
     print(f"  >> {text}")
 
+@lru_cache(maxsize=1)
+def load_presets():
+    with PRESETS_PATH.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def merge_sampler_overrides(selected, sampler_overrides):
+    if not sampler_overrides:
+        return selected
+
+    selected["server_args"].update(sampler_overrides)
+
+    request_updates = {}
+    if "temp" in sampler_overrides:
+        request_updates["temperature"] = sampler_overrides["temp"]
+    if "temperature" in sampler_overrides:
+        request_updates["temperature"] = sampler_overrides["temperature"]
+    if "top_p" in sampler_overrides:
+        request_updates["top_p"] = sampler_overrides["top_p"]
+
+    selected["request_args"].update(request_updates)
+    return selected
+
+def select_preset(model_path: Path, preset_name=None, sampler_overrides=None):
+    presets = load_presets()
+    if preset_name:
+        for preset in presets.get("presets", []):
+            if preset.get("name") == preset_name:
+                selected = copy.deepcopy(preset)
+                return merge_sampler_overrides(selected, sampler_overrides)
+        if preset_name == presets["default"].get("name"):
+            selected = copy.deepcopy(presets["default"])
+            return merge_sampler_overrides(selected, sampler_overrides)
+    model_name = model_path.name.lower()
+    for preset in presets.get("presets", []):
+        if any(token in model_name for token in preset.get("match", [])):
+            selected = copy.deepcopy(preset)
+            return merge_sampler_overrides(selected, sampler_overrides)
+    selected = copy.deepcopy(presets["default"])
+    return merge_sampler_overrides(selected, sampler_overrides)
+
+def get_cache_configs(cache_labels=None):
+    if not cache_labels:
+        return CACHE_CONFIGS
+    wanted = {label.lower() for label in cache_labels}
+    return [cfg for cfg in CACHE_CONFIGS if cfg["label"].lower() in wanted]
+
+def build_llama_args(arg_map):
+    args = []
+    for key, value in arg_map.items():
+        flag = f"--{key.replace('_', '-')}"
+        args.extend([flag, str(value)])
+    return args
+
 def find_gguf_files(directory: Path):
     """Scan directory and common subdirs for .gguf files."""
     found = list(directory.glob("*.gguf"))
@@ -218,13 +281,22 @@ def port_open(port, host="localhost"):
 
 def wait_for_server(port, timeout=SERVER_WAIT_S):
     ape_print("server_wait")
+    base_url = DEFAULT_BASE_URL.format(port=port)
+    client = OpenAI(base_url=base_url, api_key=API_KEY)
     deadline = time.time() + timeout
     poked = False
     while time.time() < deadline:
         if port_open(port):
-            ape_print("server_up")
-            time.sleep(1.5)
-            return True
+            try:
+                client.chat.completions.create(
+                    model=MODEL,
+                    messages=[{"role": "user", "content": "ping"}],
+                    max_tokens=1,
+                )
+                ape_print("server_up")
+                return True
+            except Exception:
+                pass
         if not poked and time.time() > deadline - timeout / 2:
             ape_print("loading")
             poked = True
@@ -247,7 +319,8 @@ def kill_server(proc):
             proc.kill()
         time.sleep(2)
 
-def start_server(server_path: Path, model_path: Path, cache_k: str, cache_v: str, port: int):
+def start_server(server_path: Path, model_path: Path, cache_k: str, cache_v: str, port: int, preset=None):
+    preset = preset or select_preset(model_path)
     cmd = [
         str(server_path),
         "-m",               str(model_path),
@@ -264,7 +337,9 @@ def start_server(server_path: Path, model_path: Path, cache_k: str, cache_v: str
         "--top-k",          "20",
         "--repeat-penalty", "1.1",
     ]
+    cmd.extend(build_llama_args(preset.get("server_args", {})))
     print_step(f"starting server: cache-k={cache_k} cache-v={cache_v}")
+    print_step(f"preset: {preset.get('name', 'default')}")
     ape_print("loading")
     kwargs = {}
     if sys.platform != "win32":
@@ -289,7 +364,9 @@ def get_vram_mb():
         return []
 
 # ── STREAMING CALL ────────────────────────────────────────────────────────────
-def call_with_metrics(client, messages, port):
+def call_with_metrics(client, messages, port, preset=None):
+    preset = preset or load_presets()["default"]
+    request_args = preset.get("request_args", {})
     t_send        = time.perf_counter()
     first_token_t = None
     token_count   = 0
@@ -302,8 +379,8 @@ def call_with_metrics(client, messages, port):
         tools=TOOLS,
         tool_choice="auto",
         stream=True,
-        temperature=0.6,
-        top_p=0.95,
+        temperature=request_args.get("temperature", 0.6),
+        top_p=request_args.get("top_p", 0.95),
         max_tokens=512
     )
 
@@ -342,7 +419,7 @@ def call_with_metrics(client, messages, port):
     }
 
 # ── SINGLE CACHE-TYPE RUN ─────────────────────────────────────────────────────
-def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port):
+def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, preset=None, system_prompt=None):
     base_url = DEFAULT_BASE_URL.format(port=port)
     client   = OpenAI(base_url=base_url, api_key=API_KEY)
     ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -354,6 +431,8 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port):
             "model":       model_path.name,
             "num_turns":   num_turns,
             "timestamp":   datetime.now().isoformat(),
+            "sampler_preset": preset.get("name", "default") if preset else "default",
+            "system_prompt": system_prompt or DEFAULT_SYSTEM_PROMPT,
         },
         "turns": []
     }
@@ -361,11 +440,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port):
     messages = [
         {
             "role": "system",
-            "content": (
-                "You are a function-calling AI assistant. "
-                "Always call the appropriate tool(s) before responding. "
-                "Return tool calls as valid JSON."
-            )
+            "content": system_prompt or DEFAULT_SYSTEM_PROMPT
         }
     ]
 
@@ -378,7 +453,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port):
         ctx_approx = sum(len(m.get("content", "").split()) for m in messages)
 
         vram_before = get_vram_mb()
-        result      = call_with_metrics(client, messages, port)
+        result      = call_with_metrics(client, messages, port, preset=preset)
         vram_after  = get_vram_mb()
 
         tool_accuracy = []
@@ -513,7 +588,30 @@ def interactive_setup(scan_dir=None):
 
 # ── FULL BENCHMARK ORCHESTRATOR ──────────────────────────────────────────────
 def run_full_benchmark(model_path=None, server_path=None, scan_dir=None,
-                       output_dir=None, num_turns=DEFAULT_TURNS, port=DEFAULT_PORT):
+                       output_dir=None, num_turns=None, port=None, profile_path=None):
+    profile = {}
+    if profile_path:
+        profile = load_profile(profile_path)
+
+    if profile:
+        model_path = model_path or profile.get("model_path")
+        server_path = server_path or profile.get("server_path")
+        scan_dir = scan_dir or profile.get("scan_dir")
+        output_dir = output_dir or profile.get("output_dir")
+        num_turns = num_turns if num_turns is not None else profile.get("num_turns")
+        port = port if port is not None else profile.get("port")
+        profile_preset = profile.get("sampler_preset")
+        sampler_overrides = profile.get("sampler")
+        cache_labels = profile.get("cache_types")
+        system_prompt = profile.get("system_prompt")
+    else:
+        profile_preset = None
+        sampler_overrides = None
+        cache_labels = None
+        system_prompt = None
+
+    num_turns = num_turns if num_turns is not None else DEFAULT_TURNS
+    port = port if port is not None else DEFAULT_PORT
     output_path = Path(output_dir) if output_dir else Path.cwd() / "benchmark_results"
 
     if model_path:
@@ -526,11 +624,19 @@ def run_full_benchmark(model_path=None, server_path=None, scan_dir=None,
         model_path  = model_path or m
         server_path = server_path or s
 
+    preset = select_preset(model_path, preset_name=profile_preset, sampler_overrides=sampler_overrides)
+    cache_configs = get_cache_configs(cache_labels)
+    if not cache_configs:
+        cache_configs = CACHE_CONFIGS
+
     print(f"\n  Model  : {model_path.name}")
     print(f"  Server : {server_path}")
     print(f"  Turns  : {num_turns} per cache type")
-    print(f"  Runs   : {len(CACHE_CONFIGS)} ({', '.join(c['label'] for c in CACHE_CONFIGS)})")
+    print(f"  Runs   : {len(cache_configs)} ({', '.join(c['label'] for c in cache_configs)})")
     print(f"  Output : {output_path}{os.sep}")
+    print(f"  Preset : {preset.get('name', 'default')} - {preset.get('description', '')}")
+    if system_prompt:
+        print(f"  System : custom prompt loaded")
     ape_print("loading")
     print()
 
@@ -543,15 +649,15 @@ def run_full_benchmark(model_path=None, server_path=None, scan_dir=None,
     server_proc  = None
 
     try:
-        for i, cfg in enumerate(CACHE_CONFIGS):
+        for i, cfg in enumerate(cache_configs):
             label   = cfg["label"]
             cache_k = cfg["cache_k"]
             cache_v = cfg["cache_v"]
 
-            print_header(f"Run {i+1}/{len(CACHE_CONFIGS)}: {label}  (cache-k={cache_k} cache-v={cache_v})")
+            print_header(f"Run {i+1}/{len(cache_configs)}: {label}  (cache-k={cache_k} cache-v={cache_v})")
 
             kill_server(server_proc)
-            server_proc = start_server(server_path, model_path, cache_k, cache_v, port)
+            server_proc = start_server(server_path, model_path, cache_k, cache_v, port, preset=preset)
 
             if not wait_for_server(port):
                 print(f"  ERROR: server no wake up for {label}. ape skip.")
@@ -560,7 +666,7 @@ def run_full_benchmark(model_path=None, server_path=None, scan_dir=None,
                 continue
 
             try:
-                out = run_benchmark_pass(label, model_path, output_path, num_turns, port)
+                out = run_benchmark_pass(label, model_path, output_path, num_turns, port, preset=preset, system_prompt=system_prompt)
                 output_files.append(out)
             except Exception as e:
                 print(f"  ERROR during benchmark [{label}]: {e}")
@@ -569,7 +675,7 @@ def run_full_benchmark(model_path=None, server_path=None, scan_dir=None,
             kill_server(server_proc)
             server_proc = None
 
-            if i < len(CACHE_CONFIGS) - 1:
+            if i < len(cache_configs) - 1:
                 ape_wait(5, "cooldown")
 
     except KeyboardInterrupt:
