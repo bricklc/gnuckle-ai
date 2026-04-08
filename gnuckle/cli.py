@@ -26,6 +26,7 @@ def cmd_benchmark(args):
         profile_path=args.profile,
         workflow_suite=args.workflow_suite,
         session_mode=args.session_mode,
+        use_jinja=not args.no_jinja,
     )
 
 
@@ -120,6 +121,11 @@ def main():
         type=str,
         default=None,
         help="path to a gnuckle profile JSON file",
+    )
+    bench.add_argument(
+        "--no-jinja",
+        action="store_true",
+        help="disable --jinja when launching llama-server",
     )
     bench.add_argument(
         "--workflow-suite",

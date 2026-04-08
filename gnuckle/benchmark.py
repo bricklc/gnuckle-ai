@@ -217,6 +217,11 @@ def build_llama_args(arg_map):
         args.extend([flag, str(value)])
     return args
 
+
+def append_unique_flag(cmd, flag):
+    if flag not in cmd:
+        cmd.append(flag)
+
 def find_gguf_files(directory: Path):
     """Scan directory and common subdirs for .gguf files."""
     found = list(directory.glob("*.gguf"))
@@ -371,7 +376,8 @@ def kill_server(proc):
             proc.kill()
         time.sleep(2)
 
-def start_server(server_path: Path, model_path: Path, cache_k: str, cache_v: str, port: int, preset=None):
+def start_server(server_path: Path, model_path: Path, cache_k: str, cache_v: str, port: int,
+                 preset=None, use_jinja=True):
     preset = preset or select_preset(model_path)
     cmd = [
         str(server_path),
@@ -389,6 +395,8 @@ def start_server(server_path: Path, model_path: Path, cache_k: str, cache_v: str
         "--top-k",          "20",
         "--repeat-penalty", "1.1",
     ]
+    if use_jinja:
+        append_unique_flag(cmd, "--jinja")
     cmd.extend(build_llama_args(preset.get("server_args", {})))
     print_step(f"starting server: cache-k={cache_k} cache-v={cache_v}")
     print_step(f"preset: {preset.get('name', 'default')}")
@@ -421,7 +429,8 @@ def call_with_metrics(client, messages, port, preset=None):
     request_args = preset.get("request_args", {})
     t_send        = time.perf_counter()
     first_token_t = None
-    token_count   = 0
+    text_chunks   = 0
+    tool_chunks   = 0
     full_content  = ""
     tc_accum      = {}
 
@@ -444,28 +453,38 @@ def call_with_metrics(client, messages, port, preset=None):
             continue
         if delta.content:
             full_content += delta.content
-            token_count  += 1
+            text_chunks  += 1
         if delta.tool_calls:
             for tc in delta.tool_calls:
+                saw_tool_delta = False
                 idx = tc.index
                 if idx not in tc_accum:
                     tc_accum[idx] = {"id": tc.id or "", "function": {"name": "", "arguments": ""}}
                 if tc.function:
                     if tc.function.name:
                         tc_accum[idx]["function"]["name"] += tc.function.name
+                        saw_tool_delta = True
                     if tc.function.arguments:
                         tc_accum[idx]["function"]["arguments"] += tc.function.arguments
+                        saw_tool_delta = True
+                if tc.id and not tc_accum[idx]["id"]:
+                    saw_tool_delta = True
+                if saw_tool_delta:
+                    tool_chunks += 1
 
     t_end   = time.perf_counter()
     ttft    = round((first_token_t - t_send) * 1000, 1) if first_token_t else None
     elapsed = t_end - t_send
-    tps     = round(token_count / elapsed, 2) if elapsed > 0 and token_count > 0 else 0.0
+    total_chunks = text_chunks + tool_chunks
+    tps     = round(total_chunks / elapsed, 2) if elapsed > 0 and total_chunks > 0 else 0.0
 
     return {
         "content":    full_content,
         "tool_calls": list(tc_accum.values()),
         "ttft_ms":    ttft,
-        "tokens":     token_count,
+        "tokens":     total_chunks,
+        "text_tokens": text_chunks,
+        "tool_call_chunks": tool_chunks,
         "elapsed_s":  round(elapsed, 3),
         "tps":        tps
     }
@@ -563,6 +582,8 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "tool_call_arguments":   [tc["function"]["arguments"] for tc in result["tool_calls"]],
             "ttft_ms":               result["ttft_ms"],
             "tokens_generated":      result["tokens"],
+            "text_tokens_generated": result["text_tokens"],
+            "tool_call_chunks":      result["tool_call_chunks"],
             "elapsed_s":             result["elapsed_s"],
             "tps":                   result["tps"],
             "context_tokens_approx": ctx_approx,
@@ -692,7 +713,8 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
 
 
 def _print_run_banner(benchmark_mode, model_path, server_path, output_path, preset,
-                      cache_configs, num_turns, workflow_suite, session_mode, system_prompt):
+                      cache_configs, num_turns, workflow_suite, session_mode, system_prompt,
+                      use_jinja):
     print(f"\n  Mode   : {benchmark_mode}")
     print(f"  Model  : {model_path.name}")
     print(f"  Server : {server_path}")
@@ -705,6 +727,7 @@ def _print_run_banner(benchmark_mode, model_path, server_path, output_path, pres
     print(f"  Runs   : {len(cache_configs)} ({', '.join(c['label'] for c in cache_configs)})")
     print(f"  Output : {output_path}{os.sep}")
     print(f"  Preset : {preset.get('name', 'default')} - {preset.get('description', '')}")
+    print(f"  Jinja  : {'on' if use_jinja else 'off'}")
     if system_prompt:
         print("  System : custom prompt loaded")
     ape_print("loading")
@@ -713,7 +736,7 @@ def _print_run_banner(benchmark_mode, model_path, server_path, output_path, pres
 # ── FULL BENCHMARK ORCHESTRATOR ──────────────────────────────────────────────
 def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, scan_dir=None,
                        output_dir=None, num_turns=None, port=None, profile_path=None,
-                       workflow_suite=None, session_mode=None):
+                       workflow_suite=None, session_mode=None, use_jinja=True):
     profile = {}
     if profile_path:
         profile = load_profile(profile_path)
@@ -728,6 +751,8 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
         port = port if port is not None else profile.get("port")
         workflow_suite = workflow_suite or profile.get("workflow_suite")
         session_mode = session_mode or profile.get("session_mode")
+        if profile.get("use_jinja") is not None:
+            use_jinja = bool(profile.get("use_jinja"))
         profile_preset = profile.get("sampler_preset")
         sampler_overrides = profile.get("sampler")
         cache_labels = profile.get("cache_types")
@@ -772,6 +797,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
         workflow_suite=workflow_suite,
         session_mode=session_mode,
         system_prompt=system_prompt,
+        use_jinja=use_jinja,
     )
 
     confirm = input("  ape smash Enter to start [y/n]: ").strip().lower()
@@ -791,7 +817,15 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
             print_header(f"Run {i+1}/{len(cache_configs)}: {label}  (cache-k={cache_k} cache-v={cache_v})")
 
             kill_server(server_proc)
-            server_proc = start_server(server_path, model_path, cache_k, cache_v, port, preset=preset)
+            server_proc = start_server(
+                server_path,
+                model_path,
+                cache_k,
+                cache_v,
+                port,
+                preset=preset,
+                use_jinja=use_jinja,
+            )
 
             if not wait_for_server(port):
                 print(f"  ERROR: server no wake up for {label}. ape skip.")
