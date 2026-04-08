@@ -1,0 +1,90 @@
+{
+  "meta": {
+    "cache_label": "f16",
+    "model": "demo.gguf",
+    "num_turns": 3,
+    "timestamp": "2026-04-09T00:18:01.926475",
+    "sampler_preset": "default",
+    "system_prompt": "You are a function-calling AI assistant. Always call the appropriate tool(s) before responding. Return tool calls as valid JSON."
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "prompt": "What time is it in Manila and what is the weather there right now?",
+      "assistant_preview": "ok",
+      "tool_call_names": [],
+      "tool_call_arguments": [],
+      "ttft_ms": 10.0,
+      "tokens_generated": 1,
+      "text_tokens_generated": 1,
+      "tool_call_chunks": 0,
+      "elapsed_s": 1.0,
+      "tps": 1.0,
+      "context_tokens_approx": 33,
+      "tool_calls_count": 0,
+      "tool_accuracy": [],
+      "tool_accuracy_pct": null,
+      "vram_before_mb": [
+        317,
+        2248
+      ],
+      "vram_after_mb": [
+        317,
+        2248
+      ],
+      "error": null
+    },
+    {
+      "turn": 2,
+      "prompt": "Search for recent news about AI inference optimization on consumer GPUs.",
+      "assistant_preview": "",
+      "tool_call_names": [],
+      "tool_call_arguments": [],
+      "ttft_ms": null,
+      "tokens_generated": 0,
+      "text_tokens_generated": 0,
+      "tool_call_chunks": 0,
+      "elapsed_s": 0.0,
+      "tps": 0.0,
+      "context_tokens_approx": 45,
+      "tool_calls_count": 0,
+      "tool_accuracy": [],
+      "tool_accuracy_pct": null,
+      "vram_before_mb": [
+        317,
+        2248
+      ],
+      "vram_after_mb": [
+        317,
+        2248
+      ],
+      "error": "mock tool json parse failure"
+    },
+    {
+      "turn": 3,
+      "prompt": "Based on the weather, should I schedule an outdoor task today? Check my task list first.",
+      "assistant_preview": "ok",
+      "tool_call_names": [],
+      "tool_call_arguments": [],
+      "ttft_ms": 10.0,
+      "tokens_generated": 1,
+      "text_tokens_generated": 1,
+      "tool_call_chunks": 0,
+      "elapsed_s": 1.0,
+      "tps": 1.0,
+      "context_tokens_approx": 72,
+      "tool_calls_count": 0,
+      "tool_accuracy": [],
+      "tool_accuracy_pct": null,
+      "vram_before_mb": [
+        317,
+        2248
+      ],
+      "vram_after_mb": [
+        317,
+        2248
+      ],
+      "error": null
+    }
+  ]
+}

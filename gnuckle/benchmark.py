@@ -36,6 +36,7 @@ DEFAULT_PORT     = 8080
 DEFAULT_BENCHMARK_MODE = "legacy"
 DEFAULT_WORKFLOW_SUITE = "default"
 DEFAULT_SESSION_MODE = "fresh_session"
+MAX_MALFORMED_TOOL_RETRIES = 1
 SERVER_WAIT_S    = 60
 WARMUP_WAIT_S    = 120
 PRESETS_PATH     = Path(__file__).with_name("llama_presets.json")
@@ -162,6 +163,44 @@ def print_header(text):
 
 def print_step(text):
     print(f"  >> {text}")
+
+
+def summarize_exception(exc: Exception) -> str:
+    text = str(exc).strip()
+    return text or exc.__class__.__name__
+
+
+def is_retryable_turn_error(text: str) -> bool:
+    lowered = (text or "").lower()
+    return (
+        "tool call" in lowered
+        or "json" in lowered
+        or "parse" in lowered
+        or "invalid tool" in lowered
+    )
+
+
+def make_tool_result_message(tool_call_id, name, ok, content, error_type=None, denied=False, arguments=None, retry_errors=None):
+    payload = {
+        "tool": name,
+        "ok": ok,
+        "is_error": not ok,
+        "error_type": error_type,
+        "denied": denied,
+    }
+    if ok:
+        payload["content"] = content
+    else:
+        payload["error"] = content
+    if arguments is not None:
+        payload["arguments"] = arguments
+    if retry_errors:
+        payload["retry_errors"] = list(retry_errors)
+    return {
+        "role": "tool",
+        "tool_call_id": tool_call_id,
+        "content": json.dumps(payload, ensure_ascii=True),
+    }
 
 @lru_cache(maxsize=1)
 def load_presets():
@@ -505,7 +544,17 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "sampler_preset": preset.get("name", "default") if preset else "default",
             "system_prompt": system_prompt or DEFAULT_SYSTEM_PROMPT,
         },
-        "turns": []
+        "turns": [],
+        "aggregate": {
+            "turn_count": num_turns,
+            "error_turns": 0,
+            "retry_events": 0,
+            "invalid_tool_call_turns": 0,
+            "tool_validation_failures": 0,
+            "execution_failures": 0,
+            "permission_denials": 0,
+            "synthetic_tool_results": 0,
+        },
     }
 
     messages = [
@@ -523,36 +572,117 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
         messages.append({"role": "user", "content": prompt})
         ctx_approx = sum(len(m.get("content", "").split()) for m in messages)
 
-        vram_before = get_vram_mb()
-        result      = call_with_metrics(client, messages, port, preset=preset)
-        vram_after  = get_vram_mb()
-
+        result = None
         tool_accuracy = []
-        tool_results  = []
+        tool_results = []
+        turn_error = None
+        retry_errors = []
+        vram_before = []
+        vram_after = []
+
+        for attempt in range(MAX_MALFORMED_TOOL_RETRIES + 1):
+            vram_before = get_vram_mb()
+            try:
+                result = call_with_metrics(client, messages, port, preset=preset)
+                turn_error = None
+            except Exception as exc:
+                result = None
+                turn_error = summarize_exception(exc)
+
+            vram_after = get_vram_mb()
+            tool_accuracy = []
+            tool_results = []
+
+            if turn_error is None and result and result["tool_calls"]:
+                malformed = False
+                for tc in result["tool_calls"]:
+                    name = tc["function"]["name"]
+                    arguments = None
+                    try:
+                        args = json.loads(tc["function"]["arguments"])
+                        arguments = args
+                        required = next(
+                            (t["function"]["parameters"].get("required", [])
+                             for t in TOOLS if t["function"]["name"] == name), []
+                        )
+                        missing = [r for r in required if r not in args]
+                        valid = len(missing) == 0
+                        error = f"missing: {missing}" if missing else None
+                    except json.JSONDecodeError as e:
+                        valid = False
+                        error = str(e)
+
+                    tool_accuracy.append({"tool": name, "valid": valid, "error": error})
+                    if not valid:
+                        malformed = True
+                    tool_results.append(
+                        make_tool_result_message(
+                            tool_call_id=tc.get("id", f"tc_{turn_idx}"),
+                            name=name,
+                            ok=valid,
+                            content=MOCK_RESPONSES.get(name, '{"status":"ok"}') if valid else error or "invalid tool call",
+                            error_type=None if valid else "input_validation_error",
+                            denied=False,
+                            arguments=arguments,
+                            retry_errors=retry_errors if not valid else None,
+                        )
+                    )
+                if malformed:
+                    first_error = next(
+                        (entry["error"] for entry in tool_accuracy if not entry["valid"] and entry.get("error")),
+                        "invalid tool call",
+                    )
+                    turn_error = f"invalid tool call: {first_error}"
+
+            if turn_error is None:
+                break
+
+            retry_errors.append(turn_error)
+            if attempt < MAX_MALFORMED_TOOL_RETRIES and is_retryable_turn_error(turn_error):
+                print_step(f"turn {turn_idx + 1:02d} retry after malformed tool call")
+                continue
+            break
+
+        if result is None:
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": f"Tool-call turn failed inside benchmark harness: {turn_error}",
+                }
+            )
+            turn_data = {
+                "turn":                  turn_idx + 1,
+                "prompt":                prompt,
+                "assistant_preview":     "",
+                "tool_call_names":       [],
+                "tool_call_arguments":   [],
+                "ttft_ms":               None,
+                "tokens_generated":      0,
+                "text_tokens_generated": 0,
+                "tool_call_chunks":      0,
+                "elapsed_s":             0.0,
+                "tps":                   0.0,
+                "context_tokens_approx": ctx_approx,
+                "tool_calls_count":      0,
+                "tool_accuracy":         [],
+                "tool_accuracy_pct":     None,
+                "vram_before_mb":        vram_before,
+                "vram_after_mb":         vram_after,
+                "error":                 turn_error,
+                "retry_errors":          retry_errors,
+            }
+            results["turns"].append(turn_data)
+            results["aggregate"]["error_turns"] += 1
+            results["aggregate"]["execution_failures"] += 1
+            results["aggregate"]["retry_events"] += len(retry_errors)
+            print(
+                f"  Turn {turn_idx + 1:02d} | "
+                f"tps=0.0  ttft=n/a  tok=0  tools=0  acc=N/A%  "
+                f"vram={vram_after}  error={turn_error}"
+            )
+            continue
 
         if result["tool_calls"]:
-            for tc in result["tool_calls"]:
-                name = tc["function"]["name"]
-                try:
-                    args     = json.loads(tc["function"]["arguments"])
-                    required = next(
-                        (t["function"]["parameters"].get("required", [])
-                         for t in TOOLS if t["function"]["name"] == name), []
-                    )
-                    missing = [r for r in required if r not in args]
-                    valid   = len(missing) == 0
-                    error   = f"missing: {missing}" if missing else None
-                except json.JSONDecodeError as e:
-                    valid = False
-                    error = str(e)
-
-                tool_accuracy.append({"tool": name, "valid": valid, "error": error})
-                tool_results.append({
-                    "role":         "tool",
-                    "tool_call_id": tc.get("id", f"tc_{turn_idx}"),
-                    "content":      MOCK_RESPONSES.get(name, '{"status":"ok"}')
-                })
-
             messages.append({
                 "role":       "assistant",
                 "content":    result["content"] or "",
@@ -573,6 +703,17 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             round(100 * sum(1 for t in tool_accuracy if t["valid"]) / len(tool_accuracy), 1)
             if tool_accuracy else None
         )
+        invalid_tool_entries = sum(1 for entry in tool_accuracy if not entry["valid"])
+        if invalid_tool_entries:
+            results["aggregate"]["invalid_tool_call_turns"] += 1
+            results["aggregate"]["tool_validation_failures"] += invalid_tool_entries
+            results["aggregate"]["synthetic_tool_results"] += len(result["tool_calls"])
+            results["aggregate"]["error_turns"] += 1
+            turn_error = next(
+                (entry["error"] for entry in tool_accuracy if not entry["valid"] and entry.get("error")),
+                "invalid tool call",
+            )
+        results["aggregate"]["retry_events"] += len(retry_errors)
 
         turn_data = {
             "turn":                  turn_idx + 1,
@@ -592,6 +733,8 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "tool_accuracy_pct":     acc_pct,
             "vram_before_mb":        vram_before,
             "vram_after_mb":         vram_after,
+            "error":                 turn_error,
+            "retry_errors":          retry_errors,
         }
 
         results["turns"].append(turn_data)

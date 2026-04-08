@@ -41,7 +41,8 @@ class Workflow:
     fixture: str
     event_type: str
     event_text: str
-    allowed_tools: list[str]
+    active_tools: list[str]
+    expected_tools: list[str]
     max_turns: int
     timeout_s: int
     verification: WorkflowVerification
@@ -62,7 +63,8 @@ class Workflow:
             fixture=data["fixture"],
             event_type=event["event_type"],
             event_text=payload["text"],
-            allowed_tools=list(data["allowed_tools"]),
+            active_tools=list(data.get("active_tools") or data["allowed_tools"]),
+            expected_tools=list(data.get("expected_tools") or data["allowed_tools"]),
             max_turns=int(data["max_turns"]),
             timeout_s=int(data.get("timeout_s", 180)),
             verification=verification,

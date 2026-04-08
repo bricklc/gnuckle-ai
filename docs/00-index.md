@@ -19,8 +19,11 @@ Numbered docs live here so the order stays explicit.
 - `07-focused-session-01-first-agentic-episode.md`
   - active focused implementation target for the first runnable agentic loop
 - `08-implementation-workflow-rules.md`
-- `09-focused-session-01-status.md`
   - execution rules for building against the locked v1 metrics without scope drift
+- `09-focused-session-01-status.md`
+  - status note for the first focused implementation slice
+- `10-openclaude-failure-handling-grounding.md`
+  - minimal failure-handling rules borrowed from the OpenClaude pattern
 
 Rule:
 - add new notes as `02-...`, `03-...`, `04-...`

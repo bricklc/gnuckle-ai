@@ -246,6 +246,15 @@ Required failure labels:
 - `malformed_finish`
 - `harness_error`
 
+Required failure event counters when applicable:
+
+- `invalid_tool_calls`
+- `retry_events`
+- `malformed_finish_events`
+- `execution_failures`
+- `permission_denials`
+- `synthetic_tool_results`
+
 This is mandatory because infrastructure problems must not be scored as model incapability.
 
 ## Required Reporting Visibility

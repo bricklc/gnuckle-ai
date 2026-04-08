@@ -13,6 +13,21 @@ from gnuckle.agentic_types import Workflow
 
 def tool_definitions(allowed_tools: list[str]) -> list[dict]:
     specs = {
+        "search": {
+            "type": "function",
+            "function": {
+                "name": "search",
+                "description": "Search the workspace for file names or text patterns.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "file name or text pattern to search for"},
+                    },
+                    "required": ["query"],
+                    "additionalProperties": False,
+                },
+            },
+        },
         "read_file": {
             "type": "function",
             "function": {
@@ -89,6 +104,8 @@ class ToolExecutor:
         started = time.perf_counter()
         if name == "read_file":
             result = self._read_file(arguments["path"])
+        elif name == "search":
+            result = self._search(arguments["query"])
         elif name == "edit_file":
             result = self._edit_file(arguments["path"], arguments["content"])
         elif name == "run_test":
@@ -100,6 +117,125 @@ class ToolExecutor:
         elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
         result["elapsed_ms"] = elapsed_ms
         return result
+
+    def invoke(self, tool_call_id: str, name: str, arguments: dict | None) -> dict:
+        started = time.perf_counter()
+        arguments = arguments or {}
+
+        validation_error = self._validate_input(name, arguments)
+        if validation_error:
+            return self._error_result(
+                tool_call_id=tool_call_id,
+                name=name,
+                error_type="input_validation_error",
+                error=validation_error,
+                elapsed_started=started,
+                arguments=arguments,
+            )
+
+        permission_check = self._check_permission(name, arguments)
+        if permission_check is not None:
+            return self._error_result(
+                tool_call_id=tool_call_id,
+                name=name,
+                error_type="permission_denied",
+                error=permission_check,
+                elapsed_started=started,
+                arguments=arguments,
+                denied=True,
+            )
+
+        try:
+            result = self.execute(name, arguments)
+        except Exception as exc:
+            return self._error_result(
+                tool_call_id=tool_call_id,
+                name=name,
+                error_type="execution_error",
+                error=str(exc),
+                elapsed_started=started,
+                arguments=arguments,
+            )
+
+        result.update(
+            {
+                "tool_call_id": tool_call_id,
+                "is_error": False,
+                "error_type": None,
+                "denied": False,
+                "arguments": arguments,
+            }
+        )
+        return result
+
+    def _validate_input(self, name: str, arguments: dict) -> str | None:
+        specs = {
+            "search": {"required": {"query"}, "allowed": {"query"}},
+            "read_file": {"required": {"path"}, "allowed": {"path"}},
+            "edit_file": {"required": {"path", "content"}, "allowed": {"path", "content"}},
+            "run_test": {"required": set(), "allowed": set()},
+            "finish": {"required": {"summary"}, "allowed": {"summary", "files_changed"}},
+        }
+        if name not in specs:
+            return f"invalid tool: {name}"
+
+        spec = specs[name]
+        missing = sorted(field for field in spec["required"] if field not in arguments)
+        if missing:
+            return f"missing required fields: {missing}"
+
+        unexpected = sorted(field for field in arguments if field not in spec["allowed"])
+        if unexpected:
+            return f"unexpected fields: {unexpected}"
+
+        return None
+
+    def _check_permission(self, name: str, arguments: dict) -> str | None:
+        if name in {"read_file", "edit_file"} and "path" in arguments:
+            try:
+                self._resolve_workspace_path(str(arguments["path"]))
+            except Exception as exc:
+                return str(exc)
+        return None
+
+    def _search(self, query: str) -> dict:
+        needle = query.lower()
+        matches = []
+        for path in sorted(self.workspace_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(self.workspace_dir).as_posix()
+            file_hit = needle in rel.lower()
+            text_hit = False
+            if not file_hit:
+                try:
+                    content = path.read_text(encoding="utf-8")
+                    text_hit = needle in content.lower()
+                except Exception:
+                    text_hit = False
+            if file_hit or text_hit:
+                matches.append({"path": rel, "match_type": "file" if file_hit else "content"})
+        return {
+            "tool": "search",
+            "ok": True,
+            "query": query,
+            "matches": matches[:20],
+        }
+
+    def _error_result(self, tool_call_id: str, name: str, error_type: str, error: str,
+                      elapsed_started: float, arguments: dict, denied: bool = False) -> dict:
+        elapsed_ms = round((time.perf_counter() - elapsed_started) * 1000, 1)
+        return {
+            "tool": name,
+            "tool_call_id": tool_call_id,
+            "ok": False,
+            "is_error": True,
+            "error_type": error_type,
+            "error": error,
+            "denied": denied,
+            "arguments": arguments,
+            "elapsed_ms": elapsed_ms,
+        }
 
     def _resolve_workspace_path(self, relative_path: str) -> Path:
         candidate = (self.workspace_dir / relative_path).resolve()

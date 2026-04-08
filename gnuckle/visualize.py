@@ -417,6 +417,7 @@ def build_turn_section(cache, data):
         acc = turn.get("tool_accuracy_pct")
         acc_label = f"{acc}%" if acc is not None else "n/a"
         tool_summary = summarize_tool_calls(turn)
+        turn_error = truncate_text(turn.get("error", ""), limit=180)
 
         rows.append(
             f"""        <div class="turn-row">
@@ -441,6 +442,10 @@ def build_turn_section(cache, data):
               <div class="turn-block-label">tools</div>
               <div class="turn-block-text">{escape(tool_summary)}</div>
             </div>
+            {f'''<div class="turn-block">
+              <div class="turn-block-label">error</div>
+              <div class="turn-block-text">{escape(turn_error)}</div>
+            </div>''' if turn_error else ""}
           </div>
         </div>"""
         )

@@ -24,6 +24,19 @@
         "run_test",
         "finish"
       ],
+      "active_tools": [
+        "search",
+        "read_file",
+        "edit_file",
+        "run_test",
+        "finish"
+      ],
+      "expected_tools": [
+        "read_file",
+        "edit_file",
+        "run_test",
+        "finish"
+      ],
       "max_turns": 8,
       "timeout_s": 180,
       "verification": {

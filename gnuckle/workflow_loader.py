@@ -47,6 +47,13 @@ def _validate_workflow(raw: dict) -> None:
     if "type" not in success_rule:
         raise ValueError(f"workflow {raw['workflow_id']} has invalid success rule")
 
+    active_tools = raw.get("active_tools", raw.get("allowed_tools", []))
+    expected_tools = raw.get("expected_tools", raw.get("allowed_tools", []))
+    if not isinstance(active_tools, list) or not active_tools:
+        raise ValueError(f"workflow {raw['workflow_id']} has invalid active_tools")
+    if not isinstance(expected_tools, list) or not expected_tools:
+        raise ValueError(f"workflow {raw['workflow_id']} has invalid expected_tools")
+
 
 def load_workflow_suite(suite_name: str = "default") -> list[Workflow]:
     manifest = _load_raw_manifest()
