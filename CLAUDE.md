@@ -156,3 +156,64 @@ Output: static HTML or PNG. Community-comparable format matching TurboQuant thre
 - Aaryan-Kapoor CPU fork: https://github.com/Aaryan-Kapoor/llama.cpp/tree/turboquant-tq3_0
 - Hermes function calling standard: https://github.com/NousResearch/Hermes-Function-Calling
 - Unsloth Gemma 4 GGUFs: https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF
+
+---
+
+## Session Notes - 2026-04-08
+
+Use these corrections instead of the stale merge notes above:
+
+- Primary objective is TurboQuant on normal local models.
+- Bonsai / 1-bit support stays as a future capability, not the current target.
+- The wrong merge source was `Madreag/turbo3-cuda`.
+- The correct TurboQuant merge source is `TheTom/llama-cpp-turboquant`.
+- The Prism fork was cleaned back to baseline, then merged from `turbq/master`.
+- `turbo` now points at TheTom's fork.
+- Keep the backup branch `backup/madreag-merge-state` only as a recovery snapshot.
+- On this machine, the safe build target was the RTX 2060 Super first.
+- Use `-DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES="75"` for the known-good build path.
+- `gnuckle` is a Python package entry point. If the command is not on PATH, run `python -m gnuckle ...`.
+- `gnuckle visualize ./benchmark_results/` writes `turboquant_benchmark_dashboard.html`.
+
+First-run commands for a fresh clone:
+```bash
+git clone https://github.com/gnuckle-ai/gnuckle.git
+cd gnuckle
+python -m pip install -e .
+gnuckle benchmark
+gnuckle visualize ./benchmark_results/
+```
+
+---
+
+## Handoff Notes
+
+- Repo: `G:\2026 Projects\prism-ml-llama.cpp`
+- Current branch: `prism`
+- Current commit: merge commit `78bcd86dd` = `Merge remote-tracking branch 'turbq/master' into prism`
+- Clean state: `git status --short` is clean
+- Wrong source was `Madreag/turbo3-cuda`; correct TurboQuant source is `TheTom/llama-cpp-turboquant`
+- Remote `turbo` now points to `https://github.com/TheTom/llama-cpp-turboquant.git`
+- Backup branch preserved: `backup/madreag-merge-state`
+- The merge was intentionally reset and redone from clean Prism baseline before merging the correct fork
+- Build succeeded locally with `bin\llama-server.exe`
+- `gnuckle` was not on PATH in the user’s shell; first-time use should be via `python -m gnuckle ...` or by installing the package editable
+- Likely first-run commands for a fresh user:
+  - `git clone https://github.com/gnuckle-ai/gnuckle.git`
+  - `cd gnuckle`
+  - `python -m pip install -e .`
+  - `gnuckle benchmark`
+  - `gnuckle visualize ./benchmark_results/`
+- If `gnuckle` is missing on PATH, use:
+  - `python -m gnuckle benchmark`
+  - `python -m gnuckle visualize ./benchmark_results/`
+- Docs updated in `G:\2026 Projects\simian-ai\CLAUDE.md` with the corrected session notes
+- Important build context:
+  - On this machine, the safe target was the RTX 2060 Super first
+  - Use `-DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES="75"` as the known-good path
+  - CUDA 12.6 was problematic for Blackwell/120a-style targeting
+- Important user intent:
+  - Primary goal is TurboQuant on normal local models
+  - Bonsai / 1-bit support is a future capability, not the immediate target
+- Next likely task:
+  - Help the user run the first benchmark/visualize flow from their shell, or verify the package entry point installation if needed
