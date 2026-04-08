@@ -38,6 +38,7 @@ keep the external source tree you build from synced to the latest upstream [`ggm
 - [Overview](#overview)
 - [Dependencies](#dependencies)
 - [First-Time Setup](#first-time-setup)
+- [Update Helper](#update-helper)
 - [Quick Start](#quick-start)
 - [Profile Editor](#profile-editor)
 - [Shell Completions](#shell-completions)
@@ -76,7 +77,7 @@ have first-time user, yes, good. use a terminal like PowerShell or Windows Termi
 set up in a working folder you control, yes, good. example:
 
 ```powershell
-cd G:\2026 Projects
+cd C:\path\to\your\workspace
 git clone https://github.com/bricklc/gnuckle-ai.git
 cd gnuckle-ai
 ```
@@ -107,6 +108,24 @@ where to run it, yes, good:
 - run it from the root of your llama.cpp fork so it can find root-level `.gguf` files
 - if your models live in `models/` or `gguf/`, gnuckle looks there too
 - if your files live somewhere else, pass `--scan-dir` or `--model`
+
+## Update Helper
+
+have existing clone, yes, good. no need re-clone every time.
+
+```bash
+gnuckle-update
+```
+
+this helper runs from the gnuckle repo root and does:
+
+- `git pull --ff-only`
+- `npm install`
+- `python -m pip install -e .`
+
+it does not touch user profiles saved under `.gnuckle/`, yes, good.
+
+have local repo updated, yes, good. have latest banana, yes, good.
 
 ## Quick Start 🍌
 
@@ -215,8 +234,16 @@ example:
 
 ```bash
 gnuckle-profile
-gnuckle benchmark --profile ./gnuckle.profile.json
+gnuckle benchmark --profile ./.gnuckle/profiles/gnuckle.profile.json
 ```
+
+default save place:
+
+```text
+.gnuckle/profiles/
+```
+
+that folder is local-only and ignored by git, so `gnuckle-update` does not damage ape-made profiles.
 
 ## Model Presets 🧠🌴
 

@@ -58,6 +58,7 @@ function toNumber(value, fallback) {
 
 async function main() {
   const cwd = process.cwd();
+  const defaultProfileDir = path.join(cwd, ".gnuckle", "profiles");
   const presets = readPresets();
   const ggufs = findGgufs(cwd);
 
@@ -236,7 +237,7 @@ async function main() {
     type: "input",
     name: "outputPath",
     message: "save profile as",
-    initial: path.join(cwd, "gnuckle.profile.json"),
+    initial: path.join(defaultProfileDir, "gnuckle.profile.json"),
   });
 
   const profile = {
@@ -263,6 +264,7 @@ async function main() {
   };
 
   const outputPath = path.resolve(outputPathAnswer.outputPath);
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, JSON.stringify(profile, null, 2));
 
   console.log();
