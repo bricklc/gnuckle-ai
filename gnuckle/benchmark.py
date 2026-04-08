@@ -34,6 +34,7 @@ MODEL            = "local-model"
 DEFAULT_TURNS    = 20
 DEFAULT_PORT     = 8080
 SERVER_WAIT_S    = 60
+WARMUP_WAIT_S    = 120
 PRESETS_PATH     = Path(__file__).with_name("llama_presets.json")
 DEFAULT_SYSTEM_PROMPT = (
     "You are a function-calling AI assistant. "
@@ -279,6 +280,22 @@ def port_open(port, host="localhost"):
     except OSError:
         return False
 
+def is_server_loading_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "loading model" in text or "503" in text or "unavailable_error" in text
+
+def warmup_messages(system_prompt=None):
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append(
+        {
+            "role": "user",
+            "content": "Warm up the model and reply with exactly: READY",
+        }
+    )
+    return messages
+
 def wait_for_server(port, timeout=SERVER_WAIT_S):
     ape_print("server_wait")
     base_url = DEFAULT_BASE_URL.format(port=port)
@@ -292,15 +309,47 @@ def wait_for_server(port, timeout=SERVER_WAIT_S):
                     model=MODEL,
                     messages=[{"role": "user", "content": "ping"}],
                     max_tokens=1,
+                    temperature=0,
                 )
                 ape_print("server_up")
                 return True
-            except Exception:
-                pass
+            except Exception as exc:
+                if not is_server_loading_error(exc):
+                    pass
         if not poked and time.time() > deadline - timeout / 2:
             ape_print("loading")
             poked = True
         time.sleep(1)
+    return False
+
+def warmup_server(port, preset=None, system_prompt=None, timeout=WARMUP_WAIT_S):
+    base_url = DEFAULT_BASE_URL.format(port=port)
+    client = OpenAI(base_url=base_url, api_key=API_KEY)
+    preset = preset or load_presets()["default"]
+    request_args = preset.get("request_args", {})
+    deadline = time.time() + timeout
+    announced = False
+
+    while time.time() < deadline:
+        try:
+            resp = client.chat.completions.create(
+                model=MODEL,
+                messages=warmup_messages(system_prompt=system_prompt),
+                max_tokens=8,
+                temperature=request_args.get("temperature", 0.6),
+                top_p=request_args.get("top_p", 0.95),
+            )
+            content = (resp.choices[0].message.content or "").strip() if resp.choices else ""
+            if content or resp.choices:
+                print("  >> warmup done. model answer received.")
+                return True
+        except Exception as exc:
+            if not announced:
+                print("  >> preloading model. wait for first real response...")
+                announced = True
+            if not is_server_loading_error(exc):
+                print(f"  >> warmup retry after startup error: {exc}")
+        time.sleep(2)
     return False
 
 def kill_server(proc):
@@ -506,6 +555,9 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
         turn_data = {
             "turn":                  turn_idx + 1,
             "prompt":                prompt,
+            "assistant_preview":     result["content"] or "",
+            "tool_call_names":       [tc["function"]["name"] for tc in result["tool_calls"]],
+            "tool_call_arguments":   [tc["function"]["arguments"] for tc in result["tool_calls"]],
             "ttft_ms":               result["ttft_ms"],
             "tokens_generated":      result["tokens"],
             "elapsed_s":             result["elapsed_s"],
@@ -661,6 +713,12 @@ def run_full_benchmark(model_path=None, server_path=None, scan_dir=None,
 
             if not wait_for_server(port):
                 print(f"  ERROR: server no wake up for {label}. ape skip.")
+                ape_print("error")
+                kill_server(server_proc)
+                continue
+
+            if not warmup_server(port, preset=preset, system_prompt=system_prompt):
+                print(f"  ERROR: model no finish preload for {label}. ape skip.")
                 ape_print("error")
                 kill_server(server_proc)
                 continue
