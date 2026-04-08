@@ -7,6 +7,9 @@
     "gnuckle-profile": "./bin/gnuckle-profile.js",
     "gnuckle-update": "./bin/gnuckle-update.js"
   },
+  "scripts": {
+    "bump": "python scripts/bump_version.py"
+  },
   "dependencies": {
     "enquirer": "^2.4.1"
   },

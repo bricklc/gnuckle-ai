@@ -39,6 +39,7 @@ keep the external source tree you build from synced to the latest upstream [`ggm
 - [Dependencies](#dependencies)
 - [First-Time Setup](#first-time-setup)
 - [Update Helper](#update-helper)
+- [Versioning](#versioning)
 - [Quick Start](#quick-start)
 - [Profile Editor](#profile-editor)
 - [Shell Completions](#shell-completions)
@@ -126,6 +127,30 @@ this helper runs from the gnuckle repo root and does:
 it does not touch user profiles saved under `.gnuckle/`, yes, good.
 
 have local repo updated, yes, good. have latest banana, yes, good.
+
+## Versioning
+
+have version bump, yes, good. use one command to update all version files:
+
+```bash
+python scripts/bump_version.py patch
+python scripts/bump_version.py minor --commit --tag
+```
+
+or through npm:
+
+```bash
+npm run bump -- patch
+```
+
+this updates:
+
+- `gnuckle/__init__.py`
+- `pyproject.toml`
+- `package.json`
+
+use `patch` for fixes, `minor` for new backward-compatible features, and `major` for breaking changes.
+pass `--tag` if ape want `vX.Y.Z`, yes, good.
 
 ## Quick Start 🍌
 
