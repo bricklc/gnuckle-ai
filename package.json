@@ -1,0 +1,37 @@
+{
+  "name": "gnuckle",
+  "version": "0.1.0",
+  "description": "Agentic AI benchmark for llama.cpp KV cache quantization. Accidentally GNU, intentionally simian.",
+  "bin": {
+    "gnuckle": "./bin/gnuckle.js"
+  },
+  "keywords": [
+    "benchmark",
+    "llama.cpp",
+    "turboquant",
+    "kv-cache",
+    "agentic",
+    "tool-calling",
+    "ape",
+    "harambe",
+    "banana",
+    "monke",
+    "why-is-this-on-npm"
+  ],
+  "author": "Gnuckle AI",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gnuckle-ai/gnuckle"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "os": ["win32", "linux", "darwin"],
+  "files": [
+    "bin/",
+    "gnuckle/",
+    "pyproject.toml",
+    "README.md"
+  ]
+}

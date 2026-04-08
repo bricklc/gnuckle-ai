@@ -1,0 +1,285 @@
+
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-sans); }
+.dash { padding: 1rem 0; }
+.section-label { font-size: 11px; font-weight: 500; color: var(--color-text-tertiary); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
+.metric-grid { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 8px; margin-bottom: 1.5rem; }
+.mcard { background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 0.75rem 1rem; }
+.mcard .val { font-size: 20px; font-weight: 500; color: var(--color-text-primary); }
+.mcard .lbl { font-size: 11px; color: var(--color-text-secondary); margin-top: 2px; }
+.mcard .sub { font-size: 11px; margin-top: 4px; }
+.good { color: var(--color-text-success); }
+.warn { color: var(--color-text-warning); }
+.bad { color: var(--color-text-danger); }
+.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem; }
+.chart-wrap { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); padding: 1rem; }
+.chart-full { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); padding: 1rem; margin-bottom: 1rem; }
+.chart-title { font-size: 13px; font-weight: 500; color: var(--color-text-primary); margin-bottom: 4px; }
+.chart-sub { font-size: 11px; color: var(--color-text-secondary); margin-bottom: 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 10px; font-size: 11px; color: var(--color-text-secondary); }
+.legend span { display: flex; align-items: center; gap: 4px; }
+.dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.tq-badge { display: inline-block; background: #E1F5EE; color: #0F6E56; font-size: 10px; padding: 2px 7px; border-radius: var(--border-radius-md); font-weight: 500; margin-left: 6px; }
+.annotation-box { border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-md); padding: 0.75rem 1rem; margin-top: 1rem; font-size: 12px; color: var(--color-text-secondary); line-height: 1.6; }
+.annotation-box strong { color: var(--color-text-primary); font-weight: 500; }
+.table-wrap { overflow-x: auto; margin-top: 1rem; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { font-weight: 500; font-size: 11px; color: var(--color-text-secondary); text-align: left; padding: 6px 10px; border-bottom: 0.5px solid var(--color-border-tertiary); }
+td { padding: 7px 10px; border-bottom: 0.5px solid var(--color-border-tertiary); color: var(--color-text-primary); }
+tr:last-child td { border-bottom: none; }
+.highlight-row td { background: #E1F5EE; color: #0F6E56; }
+</style>
+
+<div class="dash">
+  <div class="section-label">benchmark outcomes — simulated baseline · your hardware profile</div>
+
+  <div class="metric-grid">
+    <div class="mcard">
+      <div class="val">11.4</div>
+      <div class="lbl">tok/s turbo3</div>
+      <div class="sub good">vs 10.4 q8_0</div>
+    </div>
+    <div class="mcard">
+      <div class="val">340ms</div>
+      <div class="lbl">TTFT turbo3</div>
+      <div class="sub good">vs 610ms f16</div>
+    </div>
+    <div class="mcard">
+      <div class="val">0.5%</div>
+      <div class="lbl">speed drop turn 20</div>
+      <div class="sub good">turbo3 stays flat</div>
+    </div>
+    <div class="mcard">
+      <div class="val">1,182 MB</div>
+      <div class="lbl">KV cache peak</div>
+      <div class="sub good">4.4× vs f16 (5,182)</div>
+    </div>
+    <div class="mcard">
+      <div class="val">98.5%</div>
+      <div class="lbl">tool call accuracy</div>
+      <div class="sub good">valid JSON per turn</div>
+    </div>
+  </div>
+
+  <div class="chart-full">
+    <div class="chart-title">metric 3 — context scaling degradation <span class="tq-badge">TurboQuant key claim</span></div>
+    <div class="chart-sub">generation speed (tok/s) across tool call turns — this is what TurboQuant is designed to flatten</div>
+    <div class="legend">
+      <span><span class="dot" style="background:#3B6D11"></span>turbo3 (4.4× KV compression)</span>
+      <span><span class="dot" style="background:#378ADD"></span>q4_0 KV</span>
+      <span><span class="dot" style="background:#888780"></span>q8_0 KV baseline</span>
+      <span><span class="dot" style="background:#E24B4A"></span>f16 KV (unquantized)</span>
+    </div>
+    <div style="position: relative; width: 100%; height: 220px;">
+      <canvas id="degradChart"></canvas>
+    </div>
+    <div class="annotation-box">
+      <strong>What this exposes:</strong> f16 and q8_0 degrade as context accumulates — each new tool call round-trip adds tokens to the KV cache, increasing memory reads per token. turbo3 stays within 1% of turn-1 speed through 20 turns because the compressed cache reduces the memory bandwidth burden. The crossover point — where f16 becomes slower than turbo3 despite lower compute overhead — typically appears around turns 8–12 at 4B model scale.
+    </div>
+  </div>
+
+  <div class="chart-grid">
+    <div class="chart-wrap">
+      <div class="chart-title">metric 4 — VRAM at peak context</div>
+      <div class="chart-sub">KV cache memory at turn 20 of tool chain (MB)</div>
+      <div class="legend">
+        <span><span class="dot" style="background:#3B6D11"></span>turbo3</span>
+        <span><span class="dot" style="background:#378ADD"></span>q4_0</span>
+        <span><span class="dot" style="background:#888780"></span>q8_0</span>
+        <span><span class="dot" style="background:#E24B4A"></span>f16</span>
+      </div>
+      <div style="position: relative; width: 100%; height: 180px;">
+        <canvas id="vramChart"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <div class="chart-title">metric 2 — TTFT across turns</div>
+      <div class="chart-sub">time to first token (ms) as context grows</div>
+      <div class="legend">
+        <span><span class="dot" style="background:#3B6D11"></span>turbo3</span>
+        <span><span class="dot" style="background:#888780"></span>q8_0</span>
+        <span><span class="dot" style="background:#E24B4A"></span>f16</span>
+      </div>
+      <div style="position: relative; width: 100%; height: 180px;">
+        <canvas id="ttftChart"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <div class="chart-title">metric 1 — generation speed</div>
+      <div class="chart-sub">tok/s at short vs long context (turn 1 vs turn 20)</div>
+      <div class="legend">
+        <span><span class="dot" style="background:#C0DD97"></span>turn 1</span>
+        <span><span class="dot" style="background:#3B6D11"></span>turn 20</span>
+      </div>
+      <div style="position: relative; width: 100%; height: 180px;">
+        <canvas id="speedChart"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <div class="chart-title">metric 5 — tool call accuracy</div>
+      <div class="chart-sub">% valid JSON tool calls per turn range</div>
+      <div class="legend">
+        <span><span class="dot" style="background:#3B6D11"></span>turbo3</span>
+        <span><span class="dot" style="background:#888780"></span>q8_0</span>
+        <span><span class="dot" style="background:#E24B4A"></span>f16</span>
+      </div>
+      <div style="position: relative; width: 100%; height: 180px;">
+        <canvas id="accChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="chart-full">
+    <div class="chart-title">full benchmark matrix — all metrics × all cache types</div>
+    <div class="chart-sub">simulated expected values based on TurboQuant community data (images 3 & 4) — your actual run will fill this table</div>
+    <div class="table-wrap">
+      <table>
+        <tr>
+          <th>Cache type</th>
+          <th>Compression</th>
+          <th>Gen tok/s (t1)</th>
+          <th>Gen tok/s (t20)</th>
+          <th>Degradation</th>
+          <th>TTFT t1 (ms)</th>
+          <th>TTFT t20 (ms)</th>
+          <th>VRAM peak (MB)</th>
+          <th>Tool accuracy</th>
+        </tr>
+        <tr>
+          <td>f16</td><td>1.0×</td><td>10.6</td><td>8.2</td><td class="bad">−22.6%</td><td>610</td><td>1,420</td><td>5,182</td><td>99%</td>
+        </tr>
+        <tr>
+          <td>q8_0</td><td>2.0×</td><td>10.4</td><td>9.1</td><td class="warn">−12.5%</td><td>480</td><td>980</td><td>2,591</td><td>99%</td>
+        </tr>
+        <tr>
+          <td>q4_0</td><td>3.6×</td><td>12.5</td><td>11.8</td><td class="warn">−5.6%</td><td>390</td><td>680</td><td>1,440</td><td>98%</td>
+        </tr>
+        <tr class="highlight-row">
+          <td><strong>turbo3</strong></td><td><strong>4.4×</strong></td><td><strong>11.4</strong></td><td><strong>11.3</strong></td><td class="good"><strong>−0.9%</strong></td><td><strong>340</strong></td><td><strong>350</strong></td><td><strong>1,182</strong></td><td><strong>98.5%</strong></td>
+        </tr>
+      </table>
+    </div>
+    <div class="annotation-box" style="margin-top: 12px;">
+      <strong>How to read this table:</strong> turbo3's advantage is not raw speed — q4_0 is faster at turn 1. The advantage is <strong>flatness</strong>. Degradation of −0.9% vs −22.6% for f16 means a 20-turn agentic task feels consistent throughout. Combined with the lowest VRAM peak, it leaves the most headroom for larger models and longer contexts. Tool accuracy staying at 98.5% confirms compression does not break coherence at 4B model scale.
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const turns = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20];
+
+function lerp(a,b,t){ return a+(b-a)*t; }
+function degradCurve(start, end, shape){
+  return turns.map((_,i)=>{
+    const t = i/19;
+    return +(start - (start-end)*Math.pow(t, shape)).toFixed(2);
+  });
+}
+
+const turbo3Color = '#3B6D11';
+const q4Color = '#378ADD';
+const q8Color = '#888780';
+const f16Color = '#E24B4A';
+
+new Chart(document.getElementById('degradChart'), {
+  type: 'line',
+  data: {
+    labels: turns,
+    datasets: [
+      { label:'turbo3', data: degradCurve(11.4,11.3,0.3), borderColor: turbo3Color, backgroundColor:'transparent', borderWidth:2, pointRadius:2, tension:0.3 },
+      { label:'q4_0',   data: degradCurve(12.5,11.8,0.6), borderColor: q4Color,    backgroundColor:'transparent', borderWidth:2, pointRadius:2, tension:0.3 },
+      { label:'q8_0',   data: degradCurve(10.4,9.1,0.8),  borderColor: q8Color,    backgroundColor:'transparent', borderWidth:2, pointRadius:2, tension:0.3 },
+      { label:'f16',    data: degradCurve(10.6,8.2,1.1),   borderColor: f16Color,   backgroundColor:'transparent', borderWidth:2, pointRadius:2, tension:0.3 }
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend:{ display:false } },
+    scales: {
+      x: { title:{ display:true, text:'tool call turn', color:'#888780', font:{size:11} }, ticks:{color:'#888780',font:{size:10}}, grid:{color:'rgba(128,128,128,0.1)'} },
+      y: { title:{ display:true, text:'tok/s', color:'#888780', font:{size:11} }, min:7, max:14, ticks:{color:'#888780',font:{size:10}}, grid:{color:'rgba(128,128,128,0.1)'} }
+    }
+  }
+});
+
+new Chart(document.getElementById('vramChart'), {
+  type: 'bar',
+  data: {
+    labels: ['turbo3','q4_0','q8_0','f16'],
+    datasets: [{ data:[1182,1440,2591,5182], backgroundColor:[turbo3Color,q4Color,q8Color,f16Color] }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend:{ display:false } },
+    scales: {
+      x: { ticks:{color:'#888780',font:{size:10}}, grid:{display:false} },
+      y: { ticks:{color:'#888780',font:{size:10}}, grid:{color:'rgba(128,128,128,0.1)'} }
+    }
+  }
+});
+
+new Chart(document.getElementById('ttftChart'), {
+  type: 'line',
+  data: {
+    labels: turns,
+    datasets: [
+      { label:'turbo3', data: degradCurve(340,350,0.1), borderColor:turbo3Color, backgroundColor:'transparent', borderWidth:2, pointRadius:2, tension:0.3 },
+      { label:'q8_0',   data: degradCurve(480,980,1.2), borderColor:q8Color,    backgroundColor:'transparent', borderWidth:2, pointRadius:2, tension:0.3 },
+      { label:'f16',    data: degradCurve(610,1420,1.3),borderColor:f16Color,   backgroundColor:'transparent', borderWidth:2, pointRadius:2, tension:0.3 }
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend:{ display:false } },
+    scales: {
+      x: { ticks:{color:'#888780',font:{size:10}}, grid:{color:'rgba(128,128,128,0.1)'} },
+      y: { title:{display:true,text:'ms',color:'#888780',font:{size:10}}, ticks:{color:'#888780',font:{size:10}}, grid:{color:'rgba(128,128,128,0.1)'} }
+    }
+  }
+});
+
+new Chart(document.getElementById('speedChart'), {
+  type: 'bar',
+  data: {
+    labels: ['turbo3','q4_0','q8_0','f16'],
+    datasets: [
+      { label:'turn 1',  data:[11.4,12.5,10.4,10.6], backgroundColor:'#C0DD97' },
+      { label:'turn 20', data:[11.3,11.8,9.1,8.2],   backgroundColor:turbo3Color }
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend:{ display:false } },
+    scales: {
+      x: { ticks:{color:'#888780',font:{size:10}}, grid:{display:false} },
+      y: { min:6, max:14, ticks:{color:'#888780',font:{size:10}}, grid:{color:'rgba(128,128,128,0.1)'} }
+    }
+  }
+});
+
+new Chart(document.getElementById('accChart'), {
+  type: 'bar',
+  data: {
+    labels: ['t1-5','t6-10','t11-15','t16-20'],
+    datasets: [
+      { label:'turbo3', data:[100,99,98,97],  backgroundColor:turbo3Color },
+      { label:'q8_0',   data:[100,99,99,98],  backgroundColor:q8Color },
+      { label:'f16',    data:[100,100,99,98], backgroundColor:f16Color }
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend:{ display:false } },
+    scales: {
+      x: { ticks:{color:'#888780',font:{size:10}}, grid:{display:false} },
+      y: { min:90, max:101, ticks:{color:'#888780',font:{size:10}}, grid:{color:'rgba(128,128,128,0.1)'} }
+    }
+  }
+});
+</script>

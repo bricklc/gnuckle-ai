@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gnuckle"
+version = "0.1.0"
+description = "Agentic AI benchmark for llama.cpp KV cache quantization. Accidentally GNU, intentionally simian."
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Gnuckle AI" },
+]
+keywords = ["benchmark", "llama.cpp", "turboquant", "kv-cache", "agentic", "tool-calling"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "openai>=1.0.0",
+]
+
+[project.scripts]
+gnuckle = "gnuckle.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/gnuckle-ai/gnuckle"
+Issues = "https://github.com/gnuckle-ai/gnuckle/issues"
+
+[tool.setuptools.packages.find]
+include = ["gnuckle*"]
