@@ -6,37 +6,76 @@
   <img alt="Gnuckle banner" src="assets/readme/light.png">
 </picture>
 
-```
-    ██████╗ ███╗   ██╗██╗   ██╗ ██████╗██╗  ██╗██╗     ███████╗
-   ██╔════╝ ████╗  ██║██║   ██║██╔════╝██║ ██╔╝██║     ██╔════╝
-   ██║  ███╗██╔██╗ ██║██║   ██║██║     █████╔╝ ██║     █████╗
-   ██║   ██║██║╚██╗██║██║   ██║██║     ██╔═██╗ ██║     ██╔══╝
-   ╚██████╔╝██║ ╚████║╚██████╔╝╚██████╗██║  ██╗███████╗███████╗
-    ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝╚══════╝
-```
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Status](https://img.shields.io/badge/status-alpha-orange)
 
 **Agentic AI Benchmark for llama.cpp KV Cache Quantization**
 
-*ape drag knuckle on keyboard. benchmark happen.*
+have gnuckle, yes, good.
+gnuckle benchmarks llama.cpp KV cache behavior on real tool-calling workloads.
+have benchmark harness, yes, good. have fork of llama.cpp, no, sad.
 
-*accidentally GNU, intentionally simian.*
+This repo merges ideas and references from:
+
+- [TheTom/llama-cpp-turboquant](https://github.com/TheTom/llama-cpp-turboquant.git)
+- [Mintplex-Labs/prism-ml-llama.cpp](https://github.com/Mintplex-Labs/prism-ml-llama.cpp.git)
+
+That merge path reflects the first working setup used by the original author.
+If you already have another compatible `llama-server` build, use that instead.
+
+have no vendored llama.cpp here, yes, good.
+keep the external source tree you build from synced to the latest upstream [`ggml-org/llama.cpp`](https://github.com/ggml-org/llama.cpp) or to the fork you choose.
 
 ---
 
-## Banana Start
+## Table of Contents
+
+- [Overview](#overview)
+- [Dependencies](#dependencies)
+- [Quick Start](#quick-start)
+- [Shell Completions](#shell-completions)
+- [What It Measures](#what-it-measures)
+- [Example Output](#example-output)
+- [Results](#results)
+- [How It Works](#how-it-works)
+- [Troubleshooting](#troubleshooting)
+- [Upstream References](#upstream-references)
+- [Project Structure](#project-structure)
+- [Roadmap](#roadmap)
+- [License](#license)
+
+---
+
+## Overview
+
+- have same benchmark flow across multiple KV cache types, yes, good.
+- have token rate, time to first token, VRAM, and tool-call correctness, yes, good.
+- have one JSON file per cache type per run, yes, good.
+- have static HTML dashboard from saved results, yes, good.
+
+## Dependencies
+
+- have Python 3.10+, yes, good.
+- have compatible `llama-server` binary from a current llama.cpp-based source tree, yes, good.
+- have `.gguf` model file, yes, good.
+- have CUDA-capable GPU if you are using a CUDA build, yes, good.
+- have `pip` for the Python install path, or `npm` for the wrapper package, yes, good.
+
+## Quick Start
 
 ### (🍌) prerequisites
 
-- Python 3.10+. yes. good.
-- `llama-server` built. yes. good.
-- `.gguf` model file. yes. good.
-- NVIDIA GPU. yes. good.
+- have Python 3.10+, yes, good.
+- have `llama-server` from a current llama.cpp-compatible checkout or fork, yes, good.
+- have `.gguf` model file, yes, good.
+- have NVIDIA GPU if you are using a CUDA build, yes, good.
 
-no have? go get. come back.
+no have? go get. come back. no sadness needed.
 
 ### (🍌🍌) install
 
-pick one:
+have install choice, yes, good. pick one:
 
 #### pip
 
@@ -44,7 +83,7 @@ pick one:
 pip install gnuckle
 ```
 
-normal way. yes. good.
+have pip install, yes, good. normal way.
 
 #### npm
 
@@ -52,7 +91,7 @@ normal way. yes. good.
 npm install gnuckle
 ```
 
-npm package run python program. yes really. no question. dis is de way.
+have npm package, yes, good. it runs the Python CLI through a local venv. dis is de way.
 
 #### source
 
@@ -62,11 +101,11 @@ cd gnuckle
 pip install -e .
 ```
 
-ape build own banana. also good.
+have source install, yes, good. ape build own banana.
 
-### (🍌🍌🍌) go to folder
+### (🍌🍌🍌) choose runtime
 
-go where llama-server and model live.
+have `llama-server` and model, yes, good. go where they live.
 
 ```bash
 cd C:\Users\you\llama.cpp
@@ -78,7 +117,7 @@ linux ape:
 cd ~/llama.cpp
 ```
 
-folder have server. folder have model. yes. good.
+have other folder, yes, good. skip the folder dance and pass `--server` and `--model` directly.
 
 ### (🍌🍌🍌🍌) run
 
@@ -86,34 +125,51 @@ folder have server. folder have model. yes. good.
 gnuckle benchmark
 ```
 
-gnuckle find server. yes. good.
-gnuckle find model. yes. good.
-ape pick model. ape press enter.
-gnuckle do rest.
+or, if you want to be explicit:
+
+```bash
+gnuckle benchmark -m model.gguf -s ./build/bin/llama-server
+```
+
+gnuckle finds server, yes, good.
+gnuckle finds model, yes, good.
+ape pick model. ape press enter. gnuckle do rest.
 
 ### (🍌🍌🍌🍌🍌) wait
 
-4 passes run. f16, q8_0, q4_0, turbo3. 20 turns each.
+have 4 passes, yes, good. f16, q8_0, q4_0, turbo3. 20 turns each.
 
 ape see phrases. ape see numbers. dis is normal. dis is de way.
 
 ### (🍌🍌🍌🍌🍌-🍌) results
 
-```
+```bash
 ./benchmark_results/
 ```
 
-JSON files there. open. look at numbers. numbers good. ape happy.
+have JSON files there, yes, good. open. look at numbers. numbers good. ape happy.
 
 numbers bad. ape learn. also good.
 
----
+## Shell Completions
 
-## Banana Facts
+have optional completion support, yes, good. it uses `argcomplete`.
 
-gnuckle benchmark [TurboQuant](https://github.com/ggml-org/llama.cpp/discussions/20969) KV cache types on **real agentic tool-calling workloads**.
+```bash
+pip install "gnuckle[completion]"
+eval "$(register-python-argcomplete gnuckle)"
+```
 
-not synthetic prompts. real tool calls. 20 turns. multi-tool.
+have different shell flow, yes, good. register the `gnuckle` entry point the same way you would for any `argparse` CLI.
+
+## What It Measures
+
+gnuckle benchmarks [TurboQuant](https://github.com/ggml-org/llama.cpp/discussions/20969) KV cache types on **real agentic tool-calling workloads**.
+
+have synthetic prompts? no, sad.
+have real tool calls? yes, good.
+have 20 turns? yes, good.
+have multi-tool? yes, good.
 
 | Metric | What | Good? |
 |---|---|---|
@@ -125,26 +181,12 @@ not synthetic prompts. real tool calls. 20 turns. multi-tool.
 
 cache types: `f16` -> `q8_0` -> `q4_0` -> `turbo3`
 
-turbo3 claim: 4.4x compression. speed stay flat. gnuckle test if true.
+turbo3 claim: 4.4x compression. speed stay flat.
+gnuckle test if true. claim good? benchmark say yes or no.
 
-## Banana Commands
+## Example Output
 
-```bash
-gnuckle benchmark                       # auto-find everything. easy. good.
-gnuckle benchmark -m model.gguf         # skip model picker
-gnuckle benchmark -m model.gguf -s ./build/bin/llama-server   # skip all prompts
-gnuckle benchmark -t 10                 # 10 turns. faster. less data.
-gnuckle benchmark -p 9090              # different port
-gnuckle benchmark --help               # ape need help. no shame.
-gnuckle visualize ./benchmark_results/  # writes turboquant_benchmark_dashboard.html
-gnuckle --version                      # gnuckle 0.1.0
-```
-
----
-
-## Banana Telemetry
-
-```
+```text
   >> ape poke server with stick...
   >> connection established. banana pipeline active.
   >> VRAM idle: [288, 7834] MB
@@ -159,95 +201,102 @@ gnuckle --version                      # gnuckle 0.1.0
   >> saved: benchmark_turbo3_20260408_104800.json
 ```
 
----
+## Results
 
-## Banana Output
-
-```
+```text
 benchmark_f16_20260408_102400.json
 benchmark_q8_0_20260408_103200.json
 benchmark_q4_0_20260408_104000.json
 benchmark_turbo3_20260408_104800.json
 ```
 
-each file have per-turn: tps, ttft, vram, tool accuracy, context size.
+have each file per-turn data, yes, good: tps, ttft, vram, tool accuracy, context size.
 
 4 files. 4 cache types. compare. done.
 
----
+Run:
 
-## Banana Mechanics
+```bash
+gnuckle visualize ./benchmark_results/
+```
 
-1. gnuckle start `llama-server` with cache type
-2. send 20 turns of tool-calling prompts (weather, calendar, search, tasks)
-3. measure tok/s, TTFT, VRAM, tool call JSON accuracy
-4. kill server
-5. next cache type. repeat.
+## How It Works
+
+1. gnuckle starts `llama-server` with a cache type, yes, good.
+2. gnuckle sends 20 turns of tool-calling prompts, yes, good.
+3. gnuckle measures tok/s, TTFT, VRAM, and tool-call JSON accuracy, yes, good.
+4. gnuckle kills the server, yes, good.
+5. next cache type. repeat. yes, good.
 6. save JSON. done.
 
-prompts use real cities: Manila, Tokyo, London, New York, Berlin.
+prompts use real cities: Manila, Tokyo, London, New York, Berlin. cities good.
 
-mock tool responses. benchmark measure model speed. not network. clean.
+mock tool responses. benchmark measures model speed, not network. clean, yes, good.
 
----
-
-## Banana Fixes
+## Troubleshooting
 
 | Problem | Fix |
 |---|---|
-| `gnuckle` not found | activate conda/venv. yes. try again. |
-| no .gguf found | wrong folder. cd to right folder. |
-| server no wake up | check llama-server path. run it manually first. |
-| VRAM empty | `nvidia-smi` work? no? fix that first. |
-| ape confused | `gnuckle benchmark --help`. read. yes. good. |
+| `gnuckle` not found | have conda/venv active, yes, good. or use `python -m gnuckle`. |
+| no `.gguf` found | have wrong folder, no, sad. cd to right folder, or pass `--model`. |
+| server no wake up | have wrong `llama-server` path, no, sad. run it manually first. |
+| VRAM empty | have `nvidia-smi` work? no, sad. fix that first. |
+| ape confused | have `gnuckle benchmark --help`, yes, good. read. |
 
----
+## Upstream References
 
-## Turbo Banana
-
-[TurboQuant](https://github.com/ggml-org/llama.cpp/discussions/20969) compress KV cache 4.4x. community say speed stay flat.
-
-gnuckle test this on real agent workloads. tool calls. multi-turn. long context.
-
-turbo3 hold up? run gnuckle. find out.
-
+- [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp)
+- [TheTom/llama-cpp-turboquant](https://github.com/TheTom/llama-cpp-turboquant.git)
+- [Mintplex-Labs/prism-ml-llama.cpp](https://github.com/Mintplex-Labs/prism-ml-llama.cpp.git)
+- [TurboQuant discussion](https://github.com/ggml-org/llama.cpp/discussions/20969)
 - [Madreag turbo3-cuda](https://github.com/Madreag/turbo3-cuda)
 - [Aaryan-Kapoor CPU fork](https://github.com/Aaryan-Kapoor/llama.cpp/tree/turboquant-tq3_0)
 
----
+## Project Structure
 
-## Banana Tree
-
-```
+```text
 gnuckle/
   __init__.py        # version
   __main__.py        # python -m gnuckle
   cli.py             # CLI. benchmark. visualize. help.
   benchmark.py       # engine. the banana.
   splash.py          # ASCII art. pretty.
-  ape.py             # 50+ loading phrases. important.
+  ape.py             # loading phrases. important.
+  visualize.py       # HTML dashboard generator
 bin/
   gnuckle.js         # npm wrapper. javascript is banana peel.
 pyproject.toml       # pip install
 package.json         # npm install
+README.md            # this file
 ```
 
----
-
-## Banana Roadmap
+## Roadmap
 
 - [x] multi-cache benchmark runner
-- [x] auto-detect llama-server and .gguf in cwd
+- [x] auto-detect `llama-server` and `.gguf` in cwd
 - [x] CLI entry point
 - [x] npm distribution
 - [x] `gnuckle visualize` charts
+- [x] optional shell completion support
+- [x] table of contents and badges
 - [ ] turbo4 support
 - [ ] multi-model comparison
 - [ ] community leaderboard
 
----
+## Help Wanted
 
-## Banana License
+have more advanced developer, yes, good.
+if you want to help, please do. ape not sure what ape do. need more apes do work.
+
+good places to help:
+
+- improve upstream sync guidance for llama.cpp forks
+- add more shells or better completion docs
+- expand benchmark coverage and result visualization
+- tighten install and packaging for power users
+- review docs and make them less banana, more clear
+
+## License
 
 MIT. free as in freedom. free as in banana.
 

@@ -6,6 +6,11 @@ import sys
 from gnuckle import __version__
 from gnuckle.splash import print_splash
 
+try:
+    import argcomplete
+except ImportError:
+    argcomplete = None
+
 
 def cmd_benchmark(args):
     """Run the agentic benchmark."""
@@ -86,6 +91,9 @@ def main():
     viz.set_defaults(func=cmd_visualize)
 
     # ── parse and dispatch ───────────────────────────────────────────────────
+    if argcomplete is not None:
+        argcomplete.autocomplete(parser)
+
     args = parser.parse_args()
 
     if args.command is None:

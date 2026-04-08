@@ -24,6 +24,9 @@ dependencies = [
     "openai>=1.0.0",
 ]
 
+[project.optional-dependencies]
+completion = ["argcomplete>=3.5.0"]
+
 [project.scripts]
 gnuckle = "gnuckle.cli:main"
 
