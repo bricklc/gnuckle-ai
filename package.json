@@ -22,7 +22,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/gnuckle-ai/gnuckle"
+    "url": "https://github.com/bricklc/gnuckle-ai"
   },
   "engines": {
     "node": ">=16.0.0"

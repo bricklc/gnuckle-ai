@@ -177,7 +177,7 @@ Use these corrections instead of the stale merge notes above:
 
 First-run commands for a fresh clone:
 ```bash
-git clone https://github.com/gnuckle-ai/gnuckle.git
+git clone https://github.com/bricklc/gnuckle-ai.git
 cd gnuckle
 python -m pip install -e .
 gnuckle benchmark
@@ -199,7 +199,7 @@ gnuckle visualize ./benchmark_results/
 - Build succeeded locally with `bin\llama-server.exe`
 - `gnuckle` was not on PATH in the user’s shell; first-time use should be via `python -m gnuckle ...` or by installing the package editable
 - Likely first-run commands for a fresh user:
-  - `git clone https://github.com/gnuckle-ai/gnuckle.git`
+  - `git clone https://github.com/bricklc/gnuckle-ai.git`
   - `cd gnuckle`
   - `python -m pip install -e .`
   - `gnuckle benchmark`

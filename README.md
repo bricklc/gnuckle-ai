@@ -16,6 +16,10 @@ have gnuckle, yes, good.
 gnuckle benchmarks llama.cpp KV cache behavior on real tool-calling workloads.
 have benchmark harness, yes, good. have fork of llama.cpp, no, sad.
 
+made this to benchmark our models with TurboQuant, yes, good.
+eventually we hope TurboQuant also works with 1-bit models, yes, good.
+have not tied to one fork, yes, good. all apes happy.
+
 This repo merges ideas and references from:
 
 - [TheTom/llama-cpp-turboquant](https://github.com/TheTom/llama-cpp-turboquant.git)
@@ -97,7 +101,7 @@ have npm package, yes, good. it runs the Python CLI through a local venv.
 #### source
 
 ```bash
-git clone https://github.com/gnuckle-ai/gnuckle
+git clone https://github.com/bricklc/gnuckle-ai
 cd gnuckle
 pip install -e .
 ```
@@ -324,6 +328,6 @@ MIT. free as in freedom. free as in banana.
 
 ---
 
-*by [Gnuckle AI](https://gnuckle.ai)*
+*by [Gnuckle AI](https://github.com/bricklc/gnuckle-ai)*
 
 *do u kno de way? de way is benchmark.*
