@@ -145,6 +145,7 @@ npm run bump -- patch
 
 this updates:
 
+- `gnuckle/version.json`
 - `gnuckle/__init__.py`
 - `pyproject.toml`
 - `package.json`

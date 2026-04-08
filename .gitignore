@@ -1,2 +1,4 @@
 .gnuckle/
 *.profile.json
+__pycache__/
+*.py[cod]

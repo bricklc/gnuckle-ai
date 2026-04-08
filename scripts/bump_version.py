@@ -12,17 +12,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 INIT_FILE = ROOT / "gnuckle" / "__init__.py"
+VERSION_FILE = ROOT / "gnuckle" / "version.json"
 PYPROJECT_FILE = ROOT / "pyproject.toml"
 PACKAGE_FILE = ROOT / "package.json"
-VERSION_RE = re.compile(r'__version__\s*=\s*"(?P<version>\d+\.\d+\.\d+)"')
 PYPROJECT_RE = re.compile(r'(?m)^version = "(?P<version>\d+\.\d+\.\d+)"$')
 
 
 def read_current_version() -> str:
-    match = VERSION_RE.search(INIT_FILE.read_text(encoding="utf-8"))
-    if not match:
-        raise SystemExit(f"Could not find version in {INIT_FILE}")
-    return match.group("version")
+    data = json.loads(VERSION_FILE.read_text(encoding="utf-8"))
+    version = data.get("version")
+    if not isinstance(version, str):
+        raise SystemExit(f"Could not find version in {VERSION_FILE}")
+    return version
 
 
 def bump(version: str, part: str) -> str:
@@ -44,8 +45,7 @@ def replace_version(text: str, pattern: re.Pattern[str], new_version: str, file_
 
 
 def write_versions(new_version: str) -> None:
-    init_text = INIT_FILE.read_text(encoding="utf-8")
-    INIT_FILE.write_text(replace_version(init_text, VERSION_RE, new_version, INIT_FILE), encoding="utf-8")
+    VERSION_FILE.write_text(json.dumps({"version": new_version}, indent=2) + "\n", encoding="utf-8")
 
     pyproject_text = PYPROJECT_FILE.read_text(encoding="utf-8")
     PYPROJECT_FILE.write_text(
@@ -99,7 +99,7 @@ def main() -> None:
     print(f"updated version: {current} -> {new_version}")
 
     if args.commit:
-        run_git(["add", str(INIT_FILE), str(PYPROJECT_FILE), str(PACKAGE_FILE)])
+        run_git(["add", str(VERSION_FILE), str(INIT_FILE), str(PYPROJECT_FILE), str(PACKAGE_FILE)])
         run_git(["commit", "-m", f"chore: bump version to {new_version}"])
         print(f"created commit: chore: bump version to {new_version}")
 
