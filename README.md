@@ -43,18 +43,19 @@ keep the external source tree you build from synced to the latest upstream [`ggm
 - [Upstream References](#upstream-references)
 - [Project Structure](#project-structure)
 - [Roadmap](#roadmap)
+- [Help Wanted](#help-wanted)
 - [License](#license)
 
 ---
 
-## Overview
+## Overview 🐒
 
 - have same benchmark flow across multiple KV cache types, yes, good.
 - have token rate, time to first token, VRAM, and tool-call correctness, yes, good.
 - have one JSON file per cache type per run, yes, good.
 - have static HTML dashboard from saved results, yes, good.
 
-## Dependencies
+## Dependencies 🌴
 
 - have Python 3.10+, yes, good.
 - have compatible `llama-server` binary from a current llama.cpp-based source tree, yes, good.
@@ -62,7 +63,7 @@ keep the external source tree you build from synced to the latest upstream [`ggm
 - have CUDA-capable GPU if you are using a CUDA build, yes, good.
 - have `pip` for the Python install path, or `npm` for the wrapper package, yes, good.
 
-## Quick Start
+## Quick Start 🍌
 
 ### (🍌) prerequisites
 
@@ -91,7 +92,7 @@ have pip install, yes, good. normal way.
 npm install gnuckle
 ```
 
-have npm package, yes, good. it runs the Python CLI through a local venv. dis is de way.
+have npm package, yes, good. it runs the Python CLI through a local venv.
 
 #### source
 
@@ -151,7 +152,7 @@ have JSON files there, yes, good. open. look at numbers. numbers good. ape happy
 
 numbers bad. ape learn. also good.
 
-## Shell Completions
+## Shell Completions 🧩
 
 have optional completion support, yes, good. it uses `argcomplete`.
 
@@ -162,7 +163,7 @@ eval "$(register-python-argcomplete gnuckle)"
 
 have different shell flow, yes, good. register the `gnuckle` entry point the same way you would for any `argparse` CLI.
 
-## What It Measures
+## What It Measures 📏
 
 gnuckle benchmarks [TurboQuant](https://github.com/ggml-org/llama.cpp/discussions/20969) KV cache types on **real agentic tool-calling workloads**.
 
@@ -184,7 +185,28 @@ cache types: `f16` -> `q8_0` -> `q4_0` -> `turbo3`
 turbo3 claim: 4.4x compression. speed stay flat.
 gnuckle test if true. claim good? benchmark say yes or no.
 
-## Example Output
+## Sample Prompts 🧪
+
+have benchmark samples, yes, good. this is the kind of ape work gnuckle sends through the model:
+
+- "What time is it in Manila and what is the weather there right now?"
+- "Based on the weather, should I schedule an outdoor task today? Check my task list first."
+- "Create a calendar event called 'Team Standup' for tomorrow at 9AM in Tokyo."
+- "List all my tasks and search for open-source LLM quantization news."
+- "Check the weather and create an event 'Morning Run' at 6AM tomorrow in Central Park, New York."
+- "List all tasks, get time, get weather, and search for Gemma 4 local inference performance."
+
+have tools in the mix, yes, good.
+
+```text
+get_current_time -> timezone
+get_weather -> location, units
+search_web -> query
+create_calendar_event -> title, date, location, notes
+list_tasks -> filter
+```
+
+## Example Output 🦍
 
 ```text
   >> ape poke server with stick...
@@ -201,7 +223,7 @@ gnuckle test if true. claim good? benchmark say yes or no.
   >> saved: benchmark_turbo3_20260408_104800.json
 ```
 
-## Results
+## Results 🍌🌴
 
 ```text
 benchmark_f16_20260408_102400.json
@@ -220,7 +242,7 @@ Run:
 gnuckle visualize ./benchmark_results/
 ```
 
-## How It Works
+## How It Works 🔧
 
 1. gnuckle starts `llama-server` with a cache type, yes, good.
 2. gnuckle sends 20 turns of tool-calling prompts, yes, good.
@@ -233,7 +255,7 @@ prompts use real cities: Manila, Tokyo, London, New York, Berlin. cities good.
 
 mock tool responses. benchmark measures model speed, not network. clean, yes, good.
 
-## Troubleshooting
+## Troubleshooting 🛠️
 
 | Problem | Fix |
 |---|---|
@@ -243,7 +265,7 @@ mock tool responses. benchmark measures model speed, not network. clean, yes, go
 | VRAM empty | have `nvidia-smi` work? no, sad. fix that first. |
 | ape confused | have `gnuckle benchmark --help`, yes, good. read. |
 
-## Upstream References
+## Upstream References 🌳
 
 - [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp)
 - [TheTom/llama-cpp-turboquant](https://github.com/TheTom/llama-cpp-turboquant.git)
@@ -252,7 +274,7 @@ mock tool responses. benchmark measures model speed, not network. clean, yes, go
 - [Madreag turbo3-cuda](https://github.com/Madreag/turbo3-cuda)
 - [Aaryan-Kapoor CPU fork](https://github.com/Aaryan-Kapoor/llama.cpp/tree/turboquant-tq3_0)
 
-## Project Structure
+## Project Structure 🌴
 
 ```text
 gnuckle/
@@ -270,7 +292,7 @@ package.json         # npm install
 README.md            # this file
 ```
 
-## Roadmap
+## Roadmap 🍌
 
 - [x] multi-cache benchmark runner
 - [x] auto-detect `llama-server` and `.gguf` in cwd
@@ -283,7 +305,7 @@ README.md            # this file
 - [ ] multi-model comparison
 - [ ] community leaderboard
 
-## Help Wanted
+## Help Wanted 🦍
 
 have more advanced developer, yes, good.
 if you want to help, please do. ape not sure what ape do. need more apes do work.
