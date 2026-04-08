@@ -124,6 +124,8 @@ TOOLS = [
     }
 ]
 
+ACTIVE_TOOL_NAMES = [tool["function"]["name"] for tool in TOOLS]
+
 MOCK_RESPONSES = {
     "get_current_time":      '{"time": "2026-04-08T10:24:00+00:00", "timezone": "UTC", "day": "Tuesday"}',
     "get_weather":           '{"location": "Tokyo, JP", "temp_c": 18, "condition": "Partly cloudy", "humidity": 62, "rain_chance": 20}',
@@ -153,6 +155,29 @@ TURN_PROMPTS = [
     "Search for TurboQuant llama.cpp KV cache compression benchmarks.",
     "Create event 'Benchmark Run' for tonight at 9PM in Berlin. Also check current time and weather.",
     "List all tasks, get time, get weather, and search for Gemma 4 local inference performance."
+]
+
+LEGACY_EXPECTED_TOOLS = [
+    ["get_current_time", "get_weather"],
+    ["search_web"],
+    ["get_weather", "list_tasks"],
+    ["create_calendar_event"],
+    ["get_weather", "list_tasks"],
+    ["search_web"],
+    ["create_calendar_event", "get_current_time"],
+    ["list_tasks", "search_web"],
+    ["get_weather"],
+    ["search_web", "get_current_time"],
+    ["create_calendar_event", "get_weather"],
+    ["list_tasks", "search_web"],
+    ["get_current_time", "list_tasks"],
+    ["search_web"],
+    ["get_weather", "create_calendar_event"],
+    ["list_tasks", "search_web"],
+    ["get_current_time", "get_weather", "list_tasks"],
+    ["search_web"],
+    ["create_calendar_event", "get_current_time", "get_weather"],
+    ["list_tasks", "get_current_time", "get_weather", "search_web"],
 ]
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
@@ -554,6 +579,10 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "execution_failures": 0,
             "permission_denials": 0,
             "synthetic_tool_results": 0,
+            "wrong_tool_calls": 0,
+            "unnecessary_tool_calls": 0,
+            "disallowed_tool_calls": 0,
+            "tool_selection_precision": 0.0,
         },
     }
 
@@ -569,6 +598,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
 
     for turn_idx in range(num_turns):
         prompt = TURN_PROMPTS[turn_idx % len(TURN_PROMPTS)]
+        expected_tools = LEGACY_EXPECTED_TOOLS[turn_idx % len(LEGACY_EXPECTED_TOOLS)]
         messages.append({"role": "user", "content": prompt})
         ctx_approx = sum(len(m.get("content", "").split()) for m in messages)
 
@@ -601,16 +631,23 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
                     try:
                         args = json.loads(tc["function"]["arguments"])
                         arguments = args
-                        required = next(
-                            (t["function"]["parameters"].get("required", [])
-                             for t in TOOLS if t["function"]["name"] == name), []
-                        )
-                        missing = [r for r in required if r not in args]
-                        valid = len(missing) == 0
-                        error = f"missing: {missing}" if missing else None
                     except json.JSONDecodeError as e:
+                        args = None
                         valid = False
                         error = str(e)
+                    else:
+                        tool_spec = next(
+                            (t for t in TOOLS if t["function"]["name"] == name),
+                            None,
+                        )
+                        if tool_spec is None:
+                            valid = False
+                            error = f"disallowed tool: {name}"
+                        else:
+                            required = tool_spec["function"]["parameters"].get("required", [])
+                            missing = [r for r in required if r not in args]
+                            valid = len(missing) == 0
+                            error = f"missing: {missing}" if missing else None
 
                     tool_accuracy.append({"tool": name, "valid": valid, "error": error})
                     if not valid:
@@ -653,6 +690,8 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             turn_data = {
                 "turn":                  turn_idx + 1,
                 "prompt":                prompt,
+                "active_tools":          ACTIVE_TOOL_NAMES,
+                "expected_tools":        expected_tools,
                 "assistant_preview":     "",
                 "tool_call_names":       [],
                 "tool_call_arguments":   [],
@@ -666,6 +705,10 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
                 "tool_calls_count":      0,
                 "tool_accuracy":         [],
                 "tool_accuracy_pct":     None,
+                "wrong_tool_calls":      0,
+                "unnecessary_tool_calls": 0,
+                "disallowed_tool_calls": 0,
+                "tool_selection_precision": 0.0,
                 "vram_before_mb":        vram_before,
                 "vram_after_mb":         vram_after,
                 "error":                 turn_error,
@@ -704,6 +747,27 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             if tool_accuracy else None
         )
         invalid_tool_entries = sum(1 for entry in tool_accuracy if not entry["valid"])
+        wrong_tool_calls = sum(
+            1
+            for entry in tool_accuracy
+            if entry["valid"] and entry["tool"] not in expected_tools and entry["tool"] in ACTIVE_TOOL_NAMES
+        )
+        disallowed_tool_calls = sum(
+            1
+            for entry in tool_accuracy
+            if entry["tool"] not in ACTIVE_TOOL_NAMES
+        )
+        unnecessary_tool_calls = wrong_tool_calls
+        valid_tool_calls = sum(1 for entry in tool_accuracy if entry["valid"])
+        selection_denominator = valid_tool_calls + disallowed_tool_calls
+        tool_selection_precision = (
+            round(
+                max(0.0, (selection_denominator - wrong_tool_calls - disallowed_tool_calls) / selection_denominator),
+                3,
+            )
+            if selection_denominator
+            else 1.0
+        )
         if invalid_tool_entries:
             results["aggregate"]["invalid_tool_call_turns"] += 1
             results["aggregate"]["tool_validation_failures"] += invalid_tool_entries
@@ -713,11 +777,16 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
                 (entry["error"] for entry in tool_accuracy if not entry["valid"] and entry.get("error")),
                 "invalid tool call",
             )
+        results["aggregate"]["wrong_tool_calls"] += wrong_tool_calls
+        results["aggregate"]["unnecessary_tool_calls"] += unnecessary_tool_calls
+        results["aggregate"]["disallowed_tool_calls"] += disallowed_tool_calls
         results["aggregate"]["retry_events"] += len(retry_errors)
 
         turn_data = {
             "turn":                  turn_idx + 1,
             "prompt":                prompt,
+            "active_tools":          ACTIVE_TOOL_NAMES,
+            "expected_tools":        expected_tools,
             "assistant_preview":     result["content"] or "",
             "tool_call_names":       [tc["function"]["name"] for tc in result["tool_calls"]],
             "tool_call_arguments":   [tc["function"]["arguments"] for tc in result["tool_calls"]],
@@ -731,6 +800,10 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "tool_calls_count":      len(result["tool_calls"]),
             "tool_accuracy":         tool_accuracy,
             "tool_accuracy_pct":     acc_pct,
+            "wrong_tool_calls":      wrong_tool_calls,
+            "unnecessary_tool_calls": unnecessary_tool_calls,
+            "disallowed_tool_calls": disallowed_tool_calls,
+            "tool_selection_precision": tool_selection_precision,
             "vram_before_mb":        vram_before,
             "vram_after_mb":         vram_after,
             "error":                 turn_error,
@@ -746,8 +819,25 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             f"tok={result['tokens']}  "
             f"tools={len(result['tool_calls'])}  "
             f"acc={acc_pct if acc_pct is not None else 'N/A'}%  "
+            f"sel={tool_selection_precision:.2f}  "
             f"vram={vram_after}"
         )
+
+    total_choice_calls = sum(
+        max(
+            0,
+            turn.get("tool_calls_count", 0),
+        )
+        for turn in results["turns"]
+    )
+    wrong_or_disallowed = (
+        results["aggregate"]["wrong_tool_calls"] + results["aggregate"]["disallowed_tool_calls"]
+    )
+    results["aggregate"]["tool_selection_precision"] = (
+        round(max(0.0, (total_choice_calls - wrong_or_disallowed) / total_choice_calls), 3)
+        if total_choice_calls
+        else 1.0
+    )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     with open(out_file, "w") as f:

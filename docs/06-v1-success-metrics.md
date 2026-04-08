@@ -255,6 +255,13 @@ Required failure event counters when applicable:
 - `permission_denials`
 - `synthetic_tool_results`
 
+For tool-using benchmark modes, required tool-choice metrics when applicable:
+
+- `wrong_tool_calls`
+- `unnecessary_tool_calls`
+- `disallowed_tool_calls`
+- `tool_selection_precision`
+
 This is mandatory because infrastructure problems must not be scored as model incapability.
 
 ## Required Reporting Visibility
