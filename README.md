@@ -23,9 +23,9 @@
 
 ---
 
-## Quick Start
+## Banana Start
 
-### 1. have things
+### (🍌) prerequisites
 
 - Python 3.10+. yes. good.
 - `llama-server` built. yes. good.
@@ -34,15 +34,37 @@
 
 no have? go get. come back.
 
-### 2. install gnuckle
+### (🍌🍌) install
+
+pick one:
+
+#### pip
 
 ```bash
 pip install gnuckle
 ```
 
-have gnuckle. yes. good.
+normal way. yes. good.
 
-### 3. go to folder
+#### npm
+
+```bash
+npm install gnuckle
+```
+
+npm package run python program. yes really. no question. dis is de way.
+
+#### source
+
+```bash
+git clone https://github.com/gnuckle-ai/gnuckle
+cd gnuckle
+pip install -e .
+```
+
+ape build own banana. also good.
+
+### (🍌🍌🍌) go to folder
 
 go where llama-server and model live.
 
@@ -58,7 +80,7 @@ cd ~/llama.cpp
 
 folder have server. folder have model. yes. good.
 
-### 4. run
+### (🍌🍌🍌🍌) run
 
 ```bash
 gnuckle benchmark
@@ -69,13 +91,13 @@ gnuckle find model. yes. good.
 ape pick model. ape press enter.
 gnuckle do rest.
 
-### 5. wait
+### (🍌🍌🍌🍌🍌) wait
 
 4 passes run. f16, q8_0, q4_0, turbo3. 20 turns each.
 
 ape see phrases. ape see numbers. dis is normal. dis is de way.
 
-### 6. results
+### (🍌🍌🍌🍌🍌-🍌) results
 
 ```
 ./benchmark_results/
@@ -87,7 +109,7 @@ numbers bad. ape learn. also good.
 
 ---
 
-## What dis
+## Banana Facts
 
 gnuckle benchmark [TurboQuant](https://github.com/ggml-org/llama.cpp/discussions/20969) KV cache types on **real agentic tool-calling workloads**.
 
@@ -105,39 +127,7 @@ cache types: `f16` -> `q8_0` -> `q4_0` -> `turbo3`
 
 turbo3 claim: 4.4x compression. speed stay flat. gnuckle test if true.
 
----
-
-## Install
-
-### pip
-
-```bash
-pip install gnuckle
-```
-
-normal way. yes. good.
-
-### npm
-
-```bash
-npm install gnuckle
-```
-
-npm package run python program. yes really. no question. dis is de way.
-
-### source
-
-```bash
-git clone https://github.com/gnuckle-ai/gnuckle
-cd gnuckle
-pip install -e .
-```
-
-ape build own banana. also good.
-
----
-
-## Options
+## Banana Commands
 
 ```bash
 gnuckle benchmark                       # auto-find everything. easy. good.
@@ -152,7 +142,7 @@ gnuckle --version                      # gnuckle 0.1.0
 
 ---
 
-## What ape see
+## Banana Telemetry
 
 ```
   >> ape poke server with stick...
@@ -171,7 +161,7 @@ gnuckle --version                      # gnuckle 0.1.0
 
 ---
 
-## Output
+## Banana Output
 
 ```
 benchmark_f16_20260408_102400.json
@@ -186,7 +176,7 @@ each file have per-turn: tps, ttft, vram, tool accuracy, context size.
 
 ---
 
-## How it work
+## Banana Mechanics
 
 1. gnuckle start `llama-server` with cache type
 2. send 20 turns of tool-calling prompts (weather, calendar, search, tasks)
@@ -201,7 +191,7 @@ mock tool responses. benchmark measure model speed. not network. clean.
 
 ---
 
-## Troubleshooting
+## Banana Fixes
 
 | Problem | Fix |
 |---|---|
@@ -213,7 +203,7 @@ mock tool responses. benchmark measure model speed. not network. clean.
 
 ---
 
-## TurboQuant
+## Turbo Banana
 
 [TurboQuant](https://github.com/ggml-org/llama.cpp/discussions/20969) compress KV cache 4.4x. community say speed stay flat.
 
@@ -226,7 +216,7 @@ turbo3 hold up? run gnuckle. find out.
 
 ---
 
-## Project structure
+## Banana Tree
 
 ```
 gnuckle/
@@ -244,7 +234,7 @@ package.json         # npm install
 
 ---
 
-## Roadmap
+## Banana Roadmap
 
 - [x] multi-cache benchmark runner
 - [x] auto-detect llama-server and .gguf in cwd
@@ -257,7 +247,7 @@ package.json         # npm install
 
 ---
 
-## License
+## Banana License
 
 MIT. free as in freedom. free as in banana.
 
