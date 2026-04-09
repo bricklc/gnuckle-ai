@@ -23,6 +23,8 @@ from gnuckle.system_prompt import (
     FALLBACK_SYSTEM_PROMPT,
     approx_token_count,
     default_system_prompt_for_mode,
+    tokenizer_label,
+    tokenizer_token_count,
 )
 
 # ── CACHE CONFIGS TO RUN ──────────────────────────────────────────────────────
@@ -366,6 +368,10 @@ def prompt_split_mode(gpus):
 
 
 def estimate_context_tokens(messages, tools=None):
+    return estimate_context_token_counts(messages, tools)["heuristic"]
+
+
+def estimate_context_token_counts(messages, tools=None):
     total_chars = 0
     for message in messages:
         content = message.get("content", "")
@@ -378,7 +384,41 @@ def estimate_context_tokens(messages, tools=None):
             total_chars += len(json.dumps(tool_calls, ensure_ascii=True))
     if tools:
         total_chars += len(json.dumps(tools, ensure_ascii=True))
-    return max(1, round(total_chars / 4))
+    tokenizer_payload = {
+        "messages": messages,
+        "tools": tools or [],
+    }
+    return {
+        "heuristic": max(1, round(total_chars / 4)),
+        "tokenizer": tokenizer_token_count(json.dumps(tokenizer_payload, ensure_ascii=True)),
+        "tokenizer_label": tokenizer_label(),
+    }
+
+
+def prompt_token_counts(text: str) -> dict:
+    return {
+        "heuristic": approx_token_count(text),
+        "tokenizer": tokenizer_token_count(text),
+        "tokenizer_label": tokenizer_label(),
+    }
+
+
+def token_counting_info() -> dict:
+    info = {
+        "status": "estimated",
+        "primary_method": "char/4 heuristic",
+        "measured": False,
+        "warning": (
+            "Context-pressure metrics are estimated until llama.cpp tokenizer integration exists. "
+            "Treat CB-6, CB-7, CB-10, and CB-11 context claims as having roughly 15% uncertainty."
+        ),
+    }
+    sample = tokenizer_token_count("banana")
+    if sample is not None:
+        info["secondary_method"] = f"{tokenizer_label()} approximation"
+    else:
+        info["secondary_method"] = "tokenizer unavailable"
+    return info
 
 
 def empty_usage():
@@ -781,7 +821,7 @@ def call_with_metrics(client, messages, port, preset=None):
     full_content  = ""
     tc_accum      = {}
     current_usage = empty_usage()
-    context_tokens_estimate = estimate_context_tokens(messages, TOOLS)
+    context_counts = estimate_context_token_counts(messages, TOOLS)
 
     stream = client.chat.completions.create(
         model=MODEL,
@@ -841,7 +881,10 @@ def call_with_metrics(client, messages, port, preset=None):
         "tps":        tps,
         "usage":      current_usage,
         "usage_total_tokens": usage_total_tokens(current_usage),
-        "context_tokens_estimate": context_tokens_estimate,
+        "context_tokens_estimate": context_counts["heuristic"],
+        "context_tokens_heuristic": context_counts["heuristic"],
+        "context_tokens_tokenizer": context_counts["tokenizer"],
+        "tokenizer_label": context_counts["tokenizer_label"],
     }
 
 # ── SINGLE CACHE-TYPE RUN ─────────────────────────────────────────────────────
@@ -853,6 +896,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
     out_file = output_dir / f"benchmark_{cache_label}_{ts}.json"
     split_config = split_config or {"split_mode": "layer", "main_gpu": 0, "tensor_split": None}
 
+    prompt_counts = prompt_token_counts(system_prompt or DEFAULT_SYSTEM_PROMPT)
     results = {
         "meta": {
             "cache_label": cache_label,
@@ -862,7 +906,11 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "sampler_preset": preset.get("name", "default") if preset else "default",
             "system_prompt": system_prompt or DEFAULT_SYSTEM_PROMPT,
             "system_prompt_source": system_prompt_source,
-            "system_prompt_tokens_approx": approx_token_count(system_prompt or DEFAULT_SYSTEM_PROMPT),
+            "system_prompt_tokens_approx": prompt_counts["heuristic"],
+            "system_prompt_tokens_heuristic": prompt_counts["heuristic"],
+            "system_prompt_tokens_tokenizer": prompt_counts["tokenizer"],
+            "tokenizer_label": prompt_counts["tokenizer_label"],
+            "token_counting": token_counting_info(),
             "split_config": split_config,
         },
         "turns": [],
@@ -884,6 +932,8 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "provider_output_tokens": 0,
             "provider_total_tokens": 0,
             "peak_context_tokens_estimate": 0,
+            "peak_context_tokens_heuristic": 0,
+            "peak_context_tokens_tokenizer": 0,
         },
     }
 
@@ -902,7 +952,8 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
         prompt = TURN_PROMPTS[turn_idx % len(TURN_PROMPTS)]
         expected_tools = LEGACY_EXPECTED_TOOLS[turn_idx % len(LEGACY_EXPECTED_TOOLS)]
         messages.append({"role": "user", "content": prompt})
-        ctx_approx = estimate_context_tokens(messages, TOOLS)
+        ctx_counts = estimate_context_token_counts(messages, TOOLS)
+        ctx_approx = ctx_counts["heuristic"]
 
         result = None
         tool_accuracy = []
@@ -1017,6 +1068,9 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
                 "tps":                   0.0,
                 "context_tokens_approx": ctx_approx,
                 "context_tokens_estimate": ctx_approx,
+                "context_tokens_heuristic": ctx_approx,
+                "context_tokens_tokenizer": ctx_counts["tokenizer"],
+                "tokenizer_label": ctx_counts["tokenizer_label"],
                 "provider_usage":        empty_usage(),
                 "provider_usage_total_tokens": 0,
                 "tool_calls_count":      0,
@@ -1042,6 +1096,15 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
                 results["aggregate"]["peak_context_tokens_estimate"],
                 ctx_approx,
             )
+            results["aggregate"]["peak_context_tokens_heuristic"] = max(
+                results["aggregate"]["peak_context_tokens_heuristic"],
+                ctx_approx,
+            )
+            if ctx_counts["tokenizer"] is not None:
+                results["aggregate"]["peak_context_tokens_tokenizer"] = max(
+                    results["aggregate"]["peak_context_tokens_tokenizer"],
+                    int(ctx_counts["tokenizer"]),
+                )
             print(
                 f"  Turn {turn_idx + 1:02d} | "
                 f"tps=0.0  ttft=n/a  tok=0  tools=0  acc=N/A%  "
@@ -1131,6 +1194,15 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             results["aggregate"]["peak_context_tokens_estimate"],
             int(result["context_tokens_estimate"]),
         )
+        results["aggregate"]["peak_context_tokens_heuristic"] = max(
+            results["aggregate"]["peak_context_tokens_heuristic"],
+            int(result["context_tokens_heuristic"]),
+        )
+        if result["context_tokens_tokenizer"] is not None:
+            results["aggregate"]["peak_context_tokens_tokenizer"] = max(
+                results["aggregate"]["peak_context_tokens_tokenizer"],
+                int(result["context_tokens_tokenizer"]),
+            )
 
         turn_data = {
             "turn":                  turn_idx + 1,
@@ -1148,6 +1220,9 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "tps":                   result["tps"],
             "context_tokens_approx": ctx_approx,
             "context_tokens_estimate": result["context_tokens_estimate"],
+            "context_tokens_heuristic": result["context_tokens_heuristic"],
+            "context_tokens_tokenizer": result["context_tokens_tokenizer"],
+            "tokenizer_label": result["tokenizer_label"],
             "provider_usage":        result["usage"],
             "provider_usage_total_tokens": result["usage_total_tokens"],
             "tool_calls_count":      len(result["tool_calls"]),
@@ -1328,10 +1403,14 @@ def _print_run_banner(benchmark_mode, model_path, server_path, output_path, pres
     print(f"  Preset : {preset.get('name', 'default')} - {preset.get('description', '')}")
     print(f"  Jinja  : {'on' if use_jinja else 'off'}")
     print(f"  Split  : {split_config.get('split_mode', 'layer')} (main-gpu={split_config.get('main_gpu', 0)})")
+    counting = token_counting_info()
+    print(f"  Tokens : {counting['status']} ({counting['primary_method']}; {counting['secondary_method']})")
     if system_prompt:
+        prompt_counts = prompt_token_counts(system_prompt)
         print(
             f"  System : {system_prompt_source} "
-            f"(~{approx_token_count(system_prompt)} tok)"
+            f"({prompt_counts['heuristic']} ours · "
+            f"{prompt_counts['tokenizer'] if prompt_counts['tokenizer'] is not None else 'unavailable'} {prompt_counts['tokenizer_label']})"
         )
     ape_print("loading")
     print()

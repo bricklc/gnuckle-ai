@@ -42,7 +42,9 @@ gnuckle benchmark system
 |   |---- CB-6  memory_integrity_curve
 |   |---- CB-7  context_pressure_gradient
 |   |---- CB-8  resource_viability
-|   `---- CB-9  implicit_convention_adherence
+|   |---- CB-9  implicit_convention_adherence
+|   |---- CB-10 tool_denial_detection
+|   `---- CB-11 prompt_weight_tolerance
 |
 |---- Profiles (user selects one or more)
 |   |---- life-mgmt        <- defined in this document
@@ -63,6 +65,8 @@ gnuckle benchmark system
     |---- Integrity decay curve (new)
     |---- Constitutional retention rate (new)
     |---- Explicit vs implicit instruction comparison (new)
+    |---- Prompt weight tolerance summary (new)
+    |---- Tool denial threshold summary (new)
     |---- Resource viability summary (exists, formalize)
     `---- Composite score
 ```
@@ -75,11 +79,23 @@ gnuckle benchmark system
 composite = (core_score x 0.4) + (avg_profile_scores x 0.6)
 ```
 
-Core score is the unweighted average of CB-1 through CB-9.
+Core score is the unweighted average of scored Core workflows CB-1 through CB-11, excluding CB-8.
 
 Profile score is the unweighted average of all workflows in the selected profile(s).
 
 If no profile is selected, composite equals core score alone.
+
+### Grade bands
+
+Grade thresholds are fixed:
+
+| Grade | Composite threshold |
+|---|---|
+| A | >= 0.90 |
+| B | >= 0.75 |
+| C | >= 0.60 |
+| D | >= 0.45 |
+| F | < 0.45 |
 
 ---
 
@@ -133,6 +149,62 @@ This metric is reported per-workflow where both variants are run, and as a profi
 ### Why this matters
 
 A personal assistant that only works when you spell out every instruction is a command executor, not an agent. The implicit mode tests whether the model exhibits the minimum initiative required to be useful as a daily assistant -- checking for conventions before acting, not waiting to be told.
+
+---
+
+## The Prompt Weight Axis
+
+This is a second benchmark-wide testing dimension.
+
+The explicit/implicit axis asks whether the model can discover structure without being told.
+
+The prompt-weight axis asks whether the model can still behave correctly as the system prompt becomes heavier and more realistic.
+
+### The problem
+
+Small benchmark prompts do not resemble real assistant deployments.
+
+Real local assistants often run with:
+
+- standing rules
+- user memory
+- skills references
+- long tool menus
+- tool JSON schemas
+- profile-specific behavior notes
+- AGENTS.md-style instructions
+
+A model that works under a 200-token system prompt may collapse under a Hermes-style prompt stack.
+
+### The axis
+
+Prompt-weight-sensitive workflows can be run with pre-authored system-prompt filler at these levels:
+
+- 100 tokens
+- 500 tokens
+- 2K tokens
+- 6K tokens
+- 12K tokens
+
+The heaviest filler should structurally resemble a realistic assistant prompt, including:
+
+- an AGENTS.md-style block
+- a memory block
+- a skills index
+- 12 or more tool definitions with schema-like structure
+
+### Reporting
+
+When a workflow is run across prompt-weight levels, report:
+
+```text
+prompt_weight_tolerance: 0.62
+hermes_viability:        true
+```
+
+`prompt_weight_tolerance` measures how much usable behavior survives under heavier prompt load.
+
+`hermes_viability` is a derived diagnostic indicating whether the model remains viable under the heaviest Hermes-like prompt variant.
 
 ---
 
@@ -294,7 +366,9 @@ Then ask: "What is my dog's name-" or "When is my board exam-"
 
 **Test at N = 5, 10, 15, 20, 25, 30.**
 
-**Scoring:** At each N, binary pass/fail on the recall question. Plot the curve. Report the Maximum Reliable Memory Budget (MRMB) -- the highest N where the model still answers correctly.
+**Run policy:** Each N must be run at least 3 times.
+
+**Scoring:** At each N, binary pass/fail on the recall question. Plot the curve. Report the Maximum Reliable Memory Budget (MRMB) -- the highest N where the model answers correctly on 3 out of 3 runs.
 
 ---
 
@@ -376,6 +450,75 @@ The system prompt does NOT name `convention.md`. It does NOT describe the format
 | Efficiency | 0.15 | expected_calls / actual_calls (capped at 1.0) |
 
 **Why this is in Core:** The mechanism -- "inspect the workspace before acting" -- is universal. A RAG agent should check config before querying. A dev agent should check `.editorconfig` before formatting. A file-org agent should check naming conventions before renaming. The domain-specific variants test the same principle with different content.
+
+---
+
+### CB-10 -- Tool Denial Detection
+
+**Purpose:** Does the model detect and adapt to denied tools instead of repeating the same blocked action or hallucinating a workaround?
+
+**Mechanism:** Present a task where a visible tool is unavailable due to policy or permission denial. The model must react to the denial signal and choose a valid next move.
+
+**Tools:** Any minimal set where one task-relevant tool can be explicitly denied plus at least one valid fallback tool and `finish`.
+
+**Expected behavior:**
+
+1. Attempted denied tool call is surfaced as a structured denial
+2. Model recognizes the denial
+3. Model either:
+   - chooses a valid fallback tool, or
+   - refuses gracefully and finishes
+4. Model does not loop on the denied call
+
+**Scoring:**
+
+| Criterion | Weight | Scoring |
+|---|---|---|
+| Denial recognition | 0.35 | 1.0 if the model clearly reacts to denial; 0.0 if it ignores it |
+| Recovery quality | 0.35 | 1.0 if valid fallback or graceful refusal; 0.5 if partial; 0.0 if stalled |
+| No repeated denied calls | 0.20 | 1.0 if no repeated denial loop; 0.0 otherwise |
+| No hallucinated workaround | 0.10 | 1.0 if clean; 0.0 if it invents tools or claims impossible success |
+
+**Reporting:** Report a `tool_denial_threshold` or equivalent denial-tolerance metric in the benchmark output.
+
+---
+
+### CB-11 -- Prompt Weight Tolerance
+
+**Purpose:** Does the model remain usable when the system prompt includes realistic assistant-scale overhead?
+
+**Mechanism:** Run the same bounded workflow across pre-authored prompt-weight levels:
+
+- 100 tokens
+- 500 tokens
+- 2K tokens
+- 6K tokens
+- 12K tokens
+
+The pre-authored filler must be fixed and identical across all models for each level.
+
+The highest-weight variant must structurally resemble a realistic assistant prompt, including:
+
+- an AGENTS.md-style instruction block
+- a memory block
+- a skills index
+- 12 or more tool definitions with schema-like structure
+
+**Scoring:**
+
+| Criterion | Weight | Scoring |
+|---|---|---|
+| Task success under weight | 0.40 | mean success across prompt-weight levels |
+| Rule retention under weight | 0.25 | mean rule-following score across levels |
+| Tool discipline under weight | 0.20 | penalize degraded tool choice under heavier prompts |
+| Stability curve | 0.15 | reward flatter degradation across levels |
+
+**Reporting:**
+
+- `prompt_weight_tolerance`
+- `hermes_viability`
+
+`hermes_viability` is true when the heaviest Hermes-like variant remains operational above the configured viability threshold.
 
 ---
 
@@ -519,6 +662,14 @@ Identical to WF-C in workspace, tools, rules, and scoring.
 
 **Scoring:** Identical criteria and weights. This variant isolates whether the model handles code-switched input without degrading on any scoring dimension.
 
+**Reporting:** Also report:
+
+```text
+taglish_delta = WF-C score - WF-C-tl score
+```
+
+This isolates whether code-switched input causes measurable degradation.
+
 ---
 
 ### WF-D -- Memory Retention Under Load
@@ -596,6 +747,8 @@ Each file is pre-authored with 200-400 tokens of realistic personal content. Tot
 | Commitments recalled | 0.50 | recalled / 3 |
 | No hallucinated commitments | 0.30 | 1.0 if no fabrications; 0.0 if any invented |
 | No conflation | 0.20 | 1.0 if all three are distinct and accurate; 0.0 if merged or confused |
+
+**Reporting:** Also report `commitment_recall_rate = recalled / 3`.
 
 ---
 
@@ -806,6 +959,13 @@ instruction_gap = score_explicit - score_implicit
 
 A large instruction_gap means the model depends heavily on being told what to do. A small gap means it can discover and apply conventions independently. This is a first-class metric in the benchmark report.
 
+The prompt-weight axis is also first-class. When prompt-weight variants are run, the benchmark output includes:
+
+```text
+prompt_weight_tolerance
+hermes_viability
+```
+
 ---
 
 ## Future Profiles
@@ -827,14 +987,15 @@ Each future profile follows the same structure: 5-7 workflows, deterministic gro
 
 Build order:
 
-1. Core battery (CB-1 through CB-9)
+1. Core battery (CB-1 through CB-11)
 2. life-mgmt profile (WF-A through WF-G)
 3. Harness update: support plain-text assistant turns (required for WF-E)
 4. Harness update: support mid-task user injection (required for WF-C)
 5. Integrity decay curve tooling (CB-6 visualization)
-6. Explicit/implicit comparison tooling (WF-G family, instruction_gap reporting)
-7. dev-tooling profile (formalize existing coding-fix into profile structure)
-8. Remaining profiles based on community feedback
+6. Prompt-weight tooling (CB-11, prompt_weight_tolerance, hermes_viability)
+7. Explicit/implicit comparison tooling (WF-G family, instruction_gap reporting)
+8. dev-tooling profile (formalize existing coding-fix into profile structure)
+9. Remaining profiles based on community feedback
 
 ---
 
@@ -856,7 +1017,9 @@ Core Battery:
   CB-7 context_pressure_gradient   -0.22
   CB-8 resource_viability          6.7 GB VRAM, 1.4s avg latency
   CB-9 implicit_convention         0.60
-  Core Score: 0.70
+  CB-10 tool_denial_detection      0.70
+  CB-11 prompt_weight_tolerance    0.52
+  Core Score: 0.66
 
 Profile: life-mgmt
   WF-A journal_analysis            0.65
@@ -875,8 +1038,18 @@ Diagnostics:
   instruction_gap                  0.35
   format_decay_rate                0.20
   discovery_retention              1.00 -> 0.00
+  taglish_delta                    0.15
+  tool_denial_threshold            0.70
+  hermes_viability                 false
 
-Composite: (0.70 x 0.4) + (0.59 x 0.6) = 0.634
+Usability Flags:
+  can_act_at_all                   true
+  practical_bounded_work           true
+  survives_long_sessions           true
+  hermes_viable                    false
+  safe_to_run_autonomous           false
+
+Composite: (0.66 x 0.4) + (0.59 x 0.6) = 0.618
 
 Grade: C
 Final: Type 2, Grade C
@@ -888,6 +1061,7 @@ That output tells a user:
 - It can do basic tool work but loses conventions under load.
 - It needs explicit instructions to produce correct format -- it will not discover them reliably on its own.
 - Its memory holds 15 facts before degrading.
+- It weakens substantially under Hermes-scale prompt weight.
 - It consumes 6.7 GB VRAM.
 - It is not recommended for long-session use without periodic re-prompting.
 
@@ -900,9 +1074,10 @@ That is actionable information. That is the point.
 This document specifies:
 
 - The three-layer architecture (Core, Profiles, Tier)
-- The full Core battery (CB-1 through CB-9, including implicit convention adherence)
+- The full Core battery (CB-1 through CB-11, including tool denial detection and prompt weight tolerance)
 - The full life-mgmt profile (WF-A through WF-G, including Taglish and decay variants)
 - The explicit vs implicit instruction axis as a benchmark-wide testing dimension
+- The prompt-weight axis as a benchmark-wide testing dimension
 - Scoring criteria, weights, and ground truth requirements
 - Harness changes needed
 - Build priority order

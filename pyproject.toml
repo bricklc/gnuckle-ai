@@ -22,6 +22,7 @@ classifiers = [
 ]
 dependencies = [
     "openai>=1.0.0",
+    "tiktoken>=0.9.0",
 ]
 
 [project.optional-dependencies]

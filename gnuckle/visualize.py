@@ -431,19 +431,28 @@ new Chart(document.getElementById('contextChart'), {
   data: {
     labels: $context_labels,
     datasets: [{
-      label: 'context tokens',
+      label: 'ours',
       data: $context_values,
       borderColor: '#378ADD',
       backgroundColor: 'transparent',
       borderWidth: 2,
       pointRadius: 2,
       tension: 0.3
+    }, {
+      label: '$context_tokenizer_label',
+      data: $context_tokenizer_values,
+      borderColor: '#E0A458',
+      backgroundColor: 'transparent',
+      borderWidth: 2,
+      pointRadius: 2,
+      tension: 0.3,
+      spanGaps: true
     }]
   },
   options: {
     responsive: true,
     maintainAspectRatio: false,
-    plugins: { legend: { display: false } },
+    plugins: { legend: { display: true } },
     scales: {
       x: { ticks: { color: tickColor, font: tickFont }, grid: { color: gridColor } },
       y: { ticks: { color: tickColor, font: tickFont }, grid: { color: gridColor } }
@@ -628,6 +637,16 @@ def truncate_text(text, limit=220):
     return compact[: limit - 3].rstrip() + "..."
 
 
+def format_token_dual(heuristic, tokenizer, tokenizer_label_text="OpenAI cl100k_base"):
+    ours = f"ours {heuristic}" if heuristic is not None else "ours n/a"
+    theirs = (
+        f"{tokenizer_label_text} {tokenizer}"
+        if tokenizer is not None
+        else f"{tokenizer_label_text} unavailable"
+    )
+    return f"{ours} · {theirs}"
+
+
 def summarize_tool_calls(turn):
     names = turn.get("tool_call_names")
     if names:
@@ -667,6 +686,7 @@ def build_turn_section(cache, data):
             <div>tok: {escape(str(turn.get("tokens_generated", 0)))}</div>
             <div>tools: {escape(str(turn.get("tool_calls_count", 0)))}</div>
             <div>acc: {escape(str(acc_label))}</div>
+            <div>ctx: {escape(format_token_dual(turn.get("context_tokens_heuristic", turn.get("context_tokens_estimate")), turn.get("context_tokens_tokenizer"), turn.get("tokenizer_label", "OpenAI cl100k_base")))}</div>
           </div>
           <div class="turn-body">
             <div class="turn-block">
@@ -936,7 +956,9 @@ def _build_agentic_trace_rows(trace):
         if entry.get("latency_ms") is not None:
             meta_lines.append(f"<div>latency: {escape(str(entry.get('latency_ms')))} ms</div>")
         if entry.get("context_tokens_estimate") is not None:
-            meta_lines.append(f"<div>ctx: {escape(str(entry.get('context_tokens_estimate')))} tok</div>")
+            meta_lines.append(
+                f"<div>ctx: {escape(format_token_dual(entry.get('context_tokens_heuristic', entry.get('context_tokens_estimate')), entry.get('context_tokens_tokenizer'), entry.get('tokenizer_label', 'OpenAI cl100k_base')))}</div>"
+            )
         hardware = entry.get("hardware_usage") or {}
         if hardware.get("vram_peak_mb") is not None:
             meta_lines.append(f"<div>vram: {escape(str(hardware.get('vram_peak_mb')))} MB</div>")
@@ -1028,9 +1050,11 @@ def build_agentic_html(data):
     session_mode = data.get("session_mode", "unknown")
     workflow_title = workflow.get("title", workflow.get("workflow_id", "unknown workflow"))
     split_config = (data.get("runtime_config") or {}).get("split_config", {})
+    token_counting = (data.get("runtime_config") or {}).get("token_counting", {})
     split_summary = f"{split_config.get('split_mode', 'layer')} (main-gpu={split_config.get('main_gpu', 0)})"
     context_percent = token_usage.get("context_percent_used", aggregate.get("context_percent_used"))
     context_percent_text = f"{context_percent}%" if context_percent is not None else "n/a"
+    tokenizer_label_text = token_usage.get("tokenizer_label") or "OpenAI cl100k_base"
     total_provider_tokens = (
         episode.get("provider_usage_total_tokens")
         or (episode.get("provider_usage") or {}).get("total_tokens")
@@ -1074,9 +1098,9 @@ def build_agentic_html(data):
       <div class="sub">avg turn {format_num(performance.get('avg_turn_latency_ms', 0), 0)} ms</div>
     </div>""",
             f"""    <div class="mcard">
-      <div class="val">{escape(str(token_usage.get('context_tokens_estimate', aggregate.get('peak_context_tokens_estimate', 0))))}</div>
-      <div class="lbl">peak context estimate</div>
-      <div class="sub">{escape(str(context_percent_text))} of window</div>
+      <div class="val">{escape(str(token_usage.get('context_tokens_heuristic', token_usage.get('context_tokens_estimate', aggregate.get('peak_context_tokens_heuristic', aggregate.get('peak_context_tokens_estimate', 0))))))}</div>
+      <div class="lbl">peak context estimate (ours)</div>
+      <div class="sub">{escape(format_token_dual(token_usage.get('context_tokens_heuristic', token_usage.get('context_tokens_estimate', aggregate.get('peak_context_tokens_heuristic', aggregate.get('peak_context_tokens_estimate', 0)))), token_usage.get('context_tokens_tokenizer', aggregate.get('peak_context_tokens_tokenizer')), tokenizer_label_text))}</div>
     </div>""",
             f"""    <div class="mcard">
       <div class="val">{escape(str(hardware_usage.get('vram_peak_mb', aggregate.get('vram_peak_mb', 0))))} MB</div>
@@ -1087,6 +1111,11 @@ def build_agentic_html(data):
       <div class="val">{escape(str(token_usage.get('input_tokens', aggregate.get('provider_input_tokens', 0))))}/{escape(str(token_usage.get('output_tokens', aggregate.get('provider_output_tokens', 0))))}</div>
       <div class="lbl">provider in/out tokens</div>
       <div class="sub">total {escape(str(total_provider_tokens))}</div>
+    </div>""",
+            f"""    <div class="mcard">
+      <div class="val">{escape(str(token_counting.get('status', 'estimated')))}</div>
+      <div class="lbl">token counting mode</div>
+      <div class="sub">{escape(str(token_counting.get('primary_method', 'char/4 heuristic')))} · {escape(str(token_counting.get('secondary_method', 'tokenizer unavailable')))}</div>
     </div>""",
         ]
     )
@@ -1108,12 +1137,14 @@ def build_agentic_html(data):
             f"          <tr><td>active tools</td><td>{escape(', '.join(tool_selection.get('active_tools', [])) or 'none')}</td></tr>",
             f"          <tr><td>expected tools</td><td>{escape(', '.join(tool_selection.get('expected_tools', [])) or 'none')}</td></tr>",
             f"          <tr><td>split config</td><td>{escape(split_summary)}</td></tr>",
+            f"          <tr><td>token counting</td><td>{escape(str(token_counting.get('status', 'estimated')))} ({escape(str(token_counting.get('primary_method', 'char/4 heuristic')))}; {escape(str(token_counting.get('secondary_method', 'tokenizer unavailable')))})</td></tr>",
             f"          <tr><td>tool selection precision</td><td>{format_num(tool_selection.get('tool_selection_precision', 0), 3)}</td></tr>",
             f"          <tr><td>wrong tool calls</td><td>{escape(str(failures.get('wrong_tool_calls', 0)))}</td></tr>",
             f"          <tr><td>unnecessary tool calls</td><td>{escape(str(failures.get('unnecessary_tool_calls', 0)))}</td></tr>",
             f"          <tr><td>disallowed tool calls</td><td>{escape(str(failures.get('disallowed_tool_calls', 0)))}</td></tr>",
             f"          <tr><td>repeated bad tool calls</td><td>{escape(str(failures.get('repeated_bad_tool_calls', 0)))}</td></tr>",
             f"          <tr><td>false completion claims</td><td>{escape(str(failures.get('false_completion_claims', 0)))}</td></tr>",
+            f"          <tr><td>token warning</td><td>{escape(str(token_counting.get('warning', 'none')))}</td></tr>",
             f"          <tr><td>failure reason</td><td>{escape(str(episode.get('failure_reason') or 'none'))}</td></tr>",
         ]
     )
@@ -1121,15 +1152,22 @@ def build_agentic_html(data):
     trace = episode.get("trace", [])
     context_labels = []
     context_values = []
+    context_tokenizer_values = []
     for idx, entry in enumerate(trace, start=1):
         value = entry.get("context_tokens_estimate")
         if value is None:
             continue
         context_labels.append(f"{entry.get('type', 'step')} {idx}")
         context_values.append(int(value))
+        context_tokenizer_values.append(
+            int(entry.get("context_tokens_tokenizer"))
+            if entry.get("context_tokens_tokenizer") is not None
+            else None
+        )
     if not context_labels:
         context_labels = ["no-data"]
         context_values = [0]
+        context_tokenizer_values = [None]
 
     failure_labels = json.dumps(
         ["invalid", "retries", "exec fail", "denials", "synthetic", "bad finish", "repeat bad", "false done"]
@@ -1163,6 +1201,8 @@ def build_agentic_html(data):
         trace_rows=trace_rows,
         context_labels=json.dumps(context_labels),
         context_values=json.dumps(context_values),
+        context_tokenizer_values=json.dumps(context_tokenizer_values),
+        context_tokenizer_label=escape(tokenizer_label_text),
         failure_labels=failure_labels,
         failure_values=failure_values,
         version=escape(version),
@@ -1220,8 +1260,11 @@ def run_visualize(results_dir: str):
         first = next(iter(by_cache.values()))
         model_name = first.get("meta", {}).get("model", "unknown model")
         timestamp = first.get("meta", {}).get("timestamp", datetime.now().isoformat())
-        prompt_tokens = first.get("meta", {}).get("system_prompt_tokens_approx")
+        prompt_tokens = first.get("meta", {}).get("system_prompt_tokens_heuristic", first.get("meta", {}).get("system_prompt_tokens_approx"))
+        prompt_tokens_tokenizer = first.get("meta", {}).get("system_prompt_tokens_tokenizer")
         prompt_source = first.get("meta", {}).get("system_prompt_source", "unknown_prompt")
+        tokenizer_label_text = first.get("meta", {}).get("tokenizer_label", "OpenAI cl100k_base")
+        token_counting = first.get("meta", {}).get("token_counting", {})
         split_config = first.get("meta", {}).get("split_config", {})
         split_summary = f"split {split_config.get('split_mode', 'layer')} (main-gpu={split_config.get('main_gpu', 0)})"
         try:
@@ -1232,6 +1275,12 @@ def run_visualize(results_dir: str):
             system_prompt_summary = f"system prompt {prompt_source} (~{prompt_tokens} tok) · {split_summary}"
         else:
             system_prompt_summary = f"system prompt {prompt_source} · {split_summary}"
+
+        system_prompt_summary = (
+            f"system prompt {prompt_source} ({format_token_dual(prompt_tokens, prompt_tokens_tokenizer, tokenizer_label_text)}) · "
+            f"{split_summary} · tokens {token_counting.get('status', 'estimated')} "
+            f"({token_counting.get('primary_method', 'char/4 heuristic')}; {token_counting.get('secondary_method', 'tokenizer unavailable')})"
+        )
 
         print(f"  found {len(by_cache)} cache type(s): {', '.join(by_cache.keys())}")
         print(f"  model: {model_name}")

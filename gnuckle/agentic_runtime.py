@@ -17,8 +17,9 @@ from gnuckle.tool_executor import ToolExecutor, tool_definitions
 from gnuckle.benchmark import (
     accumulate_usage,
     empty_usage,
-    estimate_context_tokens,
+    estimate_context_token_counts,
     get_hardware_snapshot,
+    token_counting_info,
     update_usage,
     usage_total_tokens,
 )
@@ -132,6 +133,23 @@ def _peak_context_tokens_from_trace(trace: list[dict]) -> int:
         if isinstance(value, (int, float)):
             peak = max(peak, int(value))
     return peak
+
+
+def _peak_context_tokenizer_from_trace(trace: list[dict]) -> int | None:
+    peak = None
+    for entry in trace:
+        value = entry.get("context_tokens_tokenizer")
+        if isinstance(value, (int, float)):
+            peak = max(int(value), peak or 0)
+    return peak
+
+
+def _tokenizer_label_from_trace(trace: list[dict]) -> str | None:
+    for entry in trace:
+        label = entry.get("tokenizer_label")
+        if label:
+            return str(label)
+    return None
 
 
 def _peak_vram_from_trace(trace: list[dict]) -> int:
@@ -290,7 +308,8 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                     total_provider_usage,
                     message_usage,
                 )
-                context_tokens_estimate = estimate_context_tokens(messages, tool_definitions(workflow.active_tools))
+                context_counts = estimate_context_token_counts(messages, tool_definitions(workflow.active_tools))
+                context_tokens_estimate = context_counts["heuristic"]
                 hardware_usage = get_hardware_snapshot(server_pid)
                 context_percent_used = (
                     round((context_tokens_estimate / max(1, int(context_window))) * 100, 2)
@@ -310,6 +329,9 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                     provider_usage=message_usage,
                     provider_usage_total_tokens=usage_total_tokens(message_usage),
                     context_tokens_estimate=context_tokens_estimate,
+                    context_tokens_heuristic=context_counts["heuristic"],
+                    context_tokens_tokenizer=context_counts["tokenizer"],
+                    tokenizer_label=context_counts["tokenizer_label"],
                     context_window=context_window,
                     context_percent_used=context_percent_used,
                     hardware_usage=hardware_usage,
@@ -640,6 +662,7 @@ def _build_episode_result(episode_id: str, workflow: Workflow, session_mode: str
         3,
     ) if tool_calls_used else 1.0
     peak_context_tokens = _peak_context_tokens_from_trace(trace)
+    peak_context_tokens_tokenizer = _peak_context_tokenizer_from_trace(trace)
     peak_vram_mb = _peak_vram_from_trace(trace)
     steady_vram_mb = _steady_vram_from_trace(trace)
     peak_ram_mb = _peak_ram_from_trace(trace)
@@ -674,6 +697,9 @@ def _build_episode_result(episode_id: str, workflow: Workflow, session_mode: str
             "input_tokens": int(total_provider_usage.get("input_tokens", 0) or 0),
             "output_tokens": int(total_provider_usage.get("output_tokens", 0) or 0),
             "context_tokens_estimate": peak_context_tokens,
+            "context_tokens_heuristic": peak_context_tokens,
+            "context_tokens_tokenizer": peak_context_tokens_tokenizer,
+            "tokenizer_label": _tokenizer_label_from_trace(trace),
             "context_window": int(context_window) if context_window else None,
             "context_percent_used": context_percent_used,
         },
@@ -749,6 +775,8 @@ def build_agentic_run_summary(workflow: Workflow, episode: dict, model_name: str
         "provider_output_tokens": int(episode.get("provider_usage", {}).get("output_tokens", 0) or 0),
         "provider_total_tokens": int(episode.get("provider_usage_total_tokens", 0) or 0),
         "peak_context_tokens_estimate": _peak_context_tokens_from_trace(episode.get("trace", [])),
+        "peak_context_tokens_heuristic": _peak_context_tokens_from_trace(episode.get("trace", [])),
+        "peak_context_tokens_tokenizer": _peak_context_tokenizer_from_trace(episode.get("trace", [])),
         "context_window": episode.get("token_usage", {}).get("context_window"),
         "context_percent_used": episode.get("token_usage", {}).get("context_percent_used"),
         "vram_peak_mb": int(episode.get("hardware_usage", {}).get("vram_peak_mb", 0) or 0),
@@ -765,6 +793,7 @@ def build_agentic_run_summary(workflow: Workflow, episode: dict, model_name: str
         "generated_at": datetime.now().isoformat(),
         "runtime_config": {
             "split_config": split_config or {"split_mode": "layer", "main_gpu": 0, "tensor_split": None},
+            "token_counting": token_counting_info(),
         },
         "episodes": [episode],
         "aggregate": aggregate,
