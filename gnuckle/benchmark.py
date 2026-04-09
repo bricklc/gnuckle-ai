@@ -15,6 +15,9 @@ import webbrowser
 from pathlib import Path
 from datetime import datetime
 from functools import lru_cache
+from urllib.error import URLError, HTTPError
+from urllib.parse import urlsplit, urlunsplit
+from urllib.request import Request, urlopen
 from openai import OpenAI
 
 from gnuckle.ape import ape_print, ape_wait, ape_phrase
@@ -371,7 +374,55 @@ def estimate_context_tokens(messages, tools=None):
     return estimate_context_token_counts(messages, tools)["heuristic"]
 
 
-def estimate_context_token_counts(messages, tools=None):
+def server_root_url(base_url: str) -> str:
+    parsed = urlsplit(base_url)
+    path = parsed.path or ""
+    if path.endswith("/v1"):
+        path = path[:-3]
+    path = path.rstrip("/")
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
+def _post_json(url: str, payload: dict) -> dict | None:
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urlopen(req, timeout=10) as resp:
+            raw = resp.read().decode("utf-8", errors="ignore")
+        return json.loads(raw)
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return None
+
+
+def llamacpp_tokenizer_label() -> str:
+    return "llama.cpp exact"
+
+
+def llamacpp_text_token_count(base_url: str | None, text: str) -> int | None:
+    if not base_url:
+        return None
+    payload = {"content": text}
+    data = _post_json(f"{server_root_url(base_url)}/tokenize", payload)
+    tokens = data.get("tokens") if isinstance(data, dict) else None
+    return len(tokens) if isinstance(tokens, list) else None
+
+
+def llamacpp_context_token_count(base_url: str | None, messages: list[dict], tools=None) -> int | None:
+    if not base_url:
+        return None
+    template_payload = {
+        "messages": messages,
+        "tools": tools or [],
+        "add_generation_prompt": True,
+    }
+    rendered = _post_json(f"{server_root_url(base_url)}/apply-template", template_payload)
+    prompt = rendered.get("prompt") if isinstance(rendered, dict) else None
+    if not prompt:
+        return None
+    return llamacpp_text_token_count(base_url, prompt)
+
+
+def estimate_context_token_counts(messages, tools=None, base_url: str | None = None):
     total_chars = 0
     for message in messages:
         content = message.get("content", "")
@@ -392,24 +443,31 @@ def estimate_context_token_counts(messages, tools=None):
         "heuristic": max(1, round(total_chars / 4)),
         "tokenizer": tokenizer_token_count(json.dumps(tokenizer_payload, ensure_ascii=True)),
         "tokenizer_label": tokenizer_label(),
+        "measured": llamacpp_context_token_count(base_url, messages, tools),
+        "measured_label": llamacpp_tokenizer_label(),
     }
 
 
-def prompt_token_counts(text: str) -> dict:
+def prompt_token_counts(text: str, base_url: str | None = None) -> dict:
     return {
         "heuristic": approx_token_count(text),
         "tokenizer": tokenizer_token_count(text),
         "tokenizer_label": tokenizer_label(),
+        "measured": llamacpp_text_token_count(base_url, text),
+        "measured_label": llamacpp_tokenizer_label(),
     }
 
 
-def token_counting_info() -> dict:
+def token_counting_info(exact_available: bool = False) -> dict:
     info = {
-        "status": "estimated",
-        "primary_method": "char/4 heuristic",
-        "measured": False,
+        "status": "measured" if exact_available else "estimated",
+        "primary_method": "llama.cpp /apply-template + /tokenize" if exact_available else "char/4 heuristic",
+        "measured": bool(exact_available),
         "warning": (
-            "Context-pressure metrics are estimated until llama.cpp tokenizer integration exists. "
+            "Context-pressure metrics are measured with llama.cpp server endpoints."
+            if exact_available
+            else
+            "Context-pressure metrics are estimated until the llama.cpp-backed exact path is available. "
             "Treat CB-6, CB-7, CB-10, and CB-11 context claims as having roughly 15% uncertainty."
         ),
     }
@@ -418,6 +476,7 @@ def token_counting_info() -> dict:
         info["secondary_method"] = f"{tokenizer_label()} approximation"
     else:
         info["secondary_method"] = "tokenizer unavailable"
+    info["tertiary_method"] = "char/4 heuristic" if exact_available else None
     return info
 
 
@@ -811,7 +870,7 @@ def get_hardware_snapshot(server_pid=None):
     }
 
 # ── STREAMING CALL ────────────────────────────────────────────────────────────
-def call_with_metrics(client, messages, port, preset=None):
+def call_with_metrics(client, messages, port, preset=None, base_url: str | None = None):
     preset = preset or load_presets()["default"]
     request_args = preset.get("request_args", {})
     t_send        = time.perf_counter()
@@ -821,7 +880,7 @@ def call_with_metrics(client, messages, port, preset=None):
     full_content  = ""
     tc_accum      = {}
     current_usage = empty_usage()
-    context_counts = estimate_context_token_counts(messages, TOOLS)
+    context_counts = estimate_context_token_counts(messages, TOOLS, base_url=base_url)
 
     stream = client.chat.completions.create(
         model=MODEL,
@@ -869,6 +928,11 @@ def call_with_metrics(client, messages, port, preset=None):
     elapsed = t_end - t_send
     total_chunks = text_chunks + tool_chunks
     tps     = round(total_chunks / elapsed, 2) if elapsed > 0 and total_chunks > 0 else 0.0
+    primary_context = (
+        int(context_counts["measured"])
+        if context_counts["measured"] is not None
+        else int(context_counts["heuristic"])
+    )
 
     return {
         "content":    full_content,
@@ -881,10 +945,12 @@ def call_with_metrics(client, messages, port, preset=None):
         "tps":        tps,
         "usage":      current_usage,
         "usage_total_tokens": usage_total_tokens(current_usage),
-        "context_tokens_estimate": context_counts["heuristic"],
+        "context_tokens_estimate": primary_context,
         "context_tokens_heuristic": context_counts["heuristic"],
         "context_tokens_tokenizer": context_counts["tokenizer"],
         "tokenizer_label": context_counts["tokenizer_label"],
+        "context_tokens_measured": context_counts["measured"],
+        "measured_label": context_counts["measured_label"],
     }
 
 # ── SINGLE CACHE-TYPE RUN ─────────────────────────────────────────────────────
@@ -896,7 +962,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
     out_file = output_dir / f"benchmark_{cache_label}_{ts}.json"
     split_config = split_config or {"split_mode": "layer", "main_gpu": 0, "tensor_split": None}
 
-    prompt_counts = prompt_token_counts(system_prompt or DEFAULT_SYSTEM_PROMPT)
+    prompt_counts = prompt_token_counts(system_prompt or DEFAULT_SYSTEM_PROMPT, base_url=base_url)
     results = {
         "meta": {
             "cache_label": cache_label,
@@ -909,8 +975,10 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "system_prompt_tokens_approx": prompt_counts["heuristic"],
             "system_prompt_tokens_heuristic": prompt_counts["heuristic"],
             "system_prompt_tokens_tokenizer": prompt_counts["tokenizer"],
+            "system_prompt_tokens_measured": prompt_counts["measured"],
             "tokenizer_label": prompt_counts["tokenizer_label"],
-            "token_counting": token_counting_info(),
+            "measured_label": prompt_counts["measured_label"],
+            "token_counting": token_counting_info(exact_available=True),
             "split_config": split_config,
         },
         "turns": [],
@@ -934,6 +1002,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "peak_context_tokens_estimate": 0,
             "peak_context_tokens_heuristic": 0,
             "peak_context_tokens_tokenizer": 0,
+            "peak_context_tokens_measured": 0,
         },
     }
 
@@ -952,8 +1021,8 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
         prompt = TURN_PROMPTS[turn_idx % len(TURN_PROMPTS)]
         expected_tools = LEGACY_EXPECTED_TOOLS[turn_idx % len(LEGACY_EXPECTED_TOOLS)]
         messages.append({"role": "user", "content": prompt})
-        ctx_counts = estimate_context_token_counts(messages, TOOLS)
-        ctx_approx = ctx_counts["heuristic"]
+        ctx_counts = estimate_context_token_counts(messages, TOOLS, base_url=base_url)
+        ctx_approx = int(ctx_counts["measured"]) if ctx_counts["measured"] is not None else ctx_counts["heuristic"]
 
         result = None
         tool_accuracy = []
@@ -966,7 +1035,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
         for attempt in range(MAX_MALFORMED_TOOL_RETRIES + 1):
             vram_before = get_vram_mb()
             try:
-                result = call_with_metrics(client, messages, port, preset=preset)
+                result = call_with_metrics(client, messages, port, preset=preset, base_url=base_url)
                 turn_error = None
             except Exception as exc:
                 result = None
@@ -1071,6 +1140,8 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
                 "context_tokens_heuristic": ctx_approx,
                 "context_tokens_tokenizer": ctx_counts["tokenizer"],
                 "tokenizer_label": ctx_counts["tokenizer_label"],
+                "context_tokens_measured": ctx_counts["measured"],
+                "measured_label": ctx_counts["measured_label"],
                 "provider_usage":        empty_usage(),
                 "provider_usage_total_tokens": 0,
                 "tool_calls_count":      0,
@@ -1104,6 +1175,11 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
                 results["aggregate"]["peak_context_tokens_tokenizer"] = max(
                     results["aggregate"]["peak_context_tokens_tokenizer"],
                     int(ctx_counts["tokenizer"]),
+                )
+            if ctx_counts["measured"] is not None:
+                results["aggregate"]["peak_context_tokens_measured"] = max(
+                    results["aggregate"]["peak_context_tokens_measured"],
+                    int(ctx_counts["measured"]),
                 )
             print(
                 f"  Turn {turn_idx + 1:02d} | "
@@ -1203,6 +1279,11 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
                 results["aggregate"]["peak_context_tokens_tokenizer"],
                 int(result["context_tokens_tokenizer"]),
             )
+        if result["context_tokens_measured"] is not None:
+            results["aggregate"]["peak_context_tokens_measured"] = max(
+                results["aggregate"]["peak_context_tokens_measured"],
+                int(result["context_tokens_measured"]),
+            )
 
         turn_data = {
             "turn":                  turn_idx + 1,
@@ -1223,6 +1304,8 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "context_tokens_heuristic": result["context_tokens_heuristic"],
             "context_tokens_tokenizer": result["context_tokens_tokenizer"],
             "tokenizer_label": result["tokenizer_label"],
+            "context_tokens_measured": result["context_tokens_measured"],
+            "measured_label": result["measured_label"],
             "provider_usage":        result["usage"],
             "provider_usage_total_tokens": result["usage_total_tokens"],
             "tool_calls_count":      len(result["tool_calls"]),
@@ -1403,10 +1486,12 @@ def _print_run_banner(benchmark_mode, model_path, server_path, output_path, pres
     print(f"  Preset : {preset.get('name', 'default')} - {preset.get('description', '')}")
     print(f"  Jinja  : {'on' if use_jinja else 'off'}")
     print(f"  Split  : {split_config.get('split_mode', 'layer')} (main-gpu={split_config.get('main_gpu', 0)})")
-    counting = token_counting_info()
-    print(f"  Tokens : {counting['status']} ({counting['primary_method']}; {counting['secondary_method']})")
+    counting = token_counting_info(exact_available=True)
+    tertiary = f"; {counting['tertiary_method']}" if counting.get("tertiary_method") else ""
+    print(f"  Tokens : {counting['status']} ({counting['primary_method']}; {counting['secondary_method']}{tertiary})")
     if system_prompt:
         prompt_counts = prompt_token_counts(system_prompt)
+        measured_count = prompt_counts["measured"] if prompt_counts["measured"] is not None else "pending"
         print(
             f"  System : {system_prompt_source} "
             f"({prompt_counts['heuristic']} ours · "

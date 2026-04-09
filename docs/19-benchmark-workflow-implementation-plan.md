@@ -119,14 +119,21 @@ Every benchmark run must emit a machine-readable token-counting mode such as:
 
 ### Current Rule
 
-Until `gnuckle` integrates a trustworthy llama.cpp-backed tokenizer path for the actual prompt text used by the server, all context-sensitive reporting must be treated as `estimated`.
+When the benchmark is running through local `llama.cpp` server routes and can successfully render the active transcript through:
+
+- `POST /apply-template`
+- `POST /tokenize`
+
+then context-sensitive reporting should be treated as `measured`.
+
+If either step is unavailable or fails, the harness must fall back to `estimated`.
 
 That means:
 
-- context fill percentage is approximate
-- prompt-weight totals are approximate
-- memory-load claims are approximate
-- any `MRMB` or decay boundary derived from those counts carries uncertainty
+- context fill percentage is measured only when the exact llama.cpp path succeeds
+- prompt-weight totals are measured only when tokenized through llama.cpp
+- memory-load claims are approximate under fallback paths
+- any `MRMB` or decay boundary derived from fallback counts carries uncertainty
 
 ### Required Warning
 

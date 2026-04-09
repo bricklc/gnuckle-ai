@@ -447,6 +447,15 @@ new Chart(document.getElementById('contextChart'), {
       pointRadius: 2,
       tension: 0.3,
       spanGaps: true
+    }, {
+      label: '$context_measured_label',
+      data: $context_measured_values,
+      borderColor: '#2A8C4A',
+      backgroundColor: 'transparent',
+      borderWidth: 2,
+      pointRadius: 2,
+      tension: 0.3,
+      spanGaps: true
     }]
   },
   options: {
@@ -637,7 +646,7 @@ def truncate_text(text, limit=220):
     return compact[: limit - 3].rstrip() + "..."
 
 
-def format_token_dual(heuristic, tokenizer, tokenizer_label_text="OpenAI cl100k_base"):
+def format_token_dual(heuristic, tokenizer, tokenizer_label_text="OpenAI cl100k_base", measured=None, measured_label_text="llama.cpp exact"):
     ours = f"ours {heuristic}" if heuristic is not None else "ours n/a"
     theirs = (
         f"{tokenizer_label_text} {tokenizer}"
@@ -645,6 +654,19 @@ def format_token_dual(heuristic, tokenizer, tokenizer_label_text="OpenAI cl100k_
         else f"{tokenizer_label_text} unavailable"
     )
     return f"{ours} · {theirs}"
+def format_token_triplet(heuristic, tokenizer, tokenizer_label_text="OpenAI cl100k_base", measured=None, measured_label_text="llama.cpp exact"):
+    ours = f"ours {heuristic}" if heuristic is not None else "ours n/a"
+    theirs = (
+        f"{tokenizer_label_text} {tokenizer}"
+        if tokenizer is not None
+        else f"{tokenizer_label_text} unavailable"
+    )
+    exact = (
+        f"{measured_label_text} {measured}"
+        if measured is not None
+        else f"{measured_label_text} unavailable"
+    )
+    return f"{ours} · {theirs} · {exact}"
 
 
 def summarize_tool_calls(turn):
@@ -686,7 +708,7 @@ def build_turn_section(cache, data):
             <div>tok: {escape(str(turn.get("tokens_generated", 0)))}</div>
             <div>tools: {escape(str(turn.get("tool_calls_count", 0)))}</div>
             <div>acc: {escape(str(acc_label))}</div>
-            <div>ctx: {escape(format_token_dual(turn.get("context_tokens_heuristic", turn.get("context_tokens_estimate")), turn.get("context_tokens_tokenizer"), turn.get("tokenizer_label", "OpenAI cl100k_base")))}</div>
+            <div>ctx: {escape(format_token_triplet(turn.get("context_tokens_heuristic", turn.get("context_tokens_estimate")), turn.get("context_tokens_tokenizer"), turn.get("tokenizer_label", "OpenAI cl100k_base"), turn.get("context_tokens_measured"), turn.get("measured_label", "llama.cpp exact")))}</div>
           </div>
           <div class="turn-body">
             <div class="turn-block">
@@ -957,7 +979,7 @@ def _build_agentic_trace_rows(trace):
             meta_lines.append(f"<div>latency: {escape(str(entry.get('latency_ms')))} ms</div>")
         if entry.get("context_tokens_estimate") is not None:
             meta_lines.append(
-                f"<div>ctx: {escape(format_token_dual(entry.get('context_tokens_heuristic', entry.get('context_tokens_estimate')), entry.get('context_tokens_tokenizer'), entry.get('tokenizer_label', 'OpenAI cl100k_base')))}</div>"
+                f"<div>ctx: {escape(format_token_triplet(entry.get('context_tokens_heuristic', entry.get('context_tokens_estimate')), entry.get('context_tokens_tokenizer'), entry.get('tokenizer_label', 'OpenAI cl100k_base'), entry.get('context_tokens_measured'), entry.get('measured_label', 'llama.cpp exact')))}</div>"
             )
         hardware = entry.get("hardware_usage") or {}
         if hardware.get("vram_peak_mb") is not None:
@@ -1055,6 +1077,7 @@ def build_agentic_html(data):
     context_percent = token_usage.get("context_percent_used", aggregate.get("context_percent_used"))
     context_percent_text = f"{context_percent}%" if context_percent is not None else "n/a"
     tokenizer_label_text = token_usage.get("tokenizer_label") or "OpenAI cl100k_base"
+    measured_label_text = token_usage.get("measured_label") or "llama.cpp exact"
     total_provider_tokens = (
         episode.get("provider_usage_total_tokens")
         or (episode.get("provider_usage") or {}).get("total_tokens")
@@ -1099,8 +1122,8 @@ def build_agentic_html(data):
     </div>""",
             f"""    <div class="mcard">
       <div class="val">{escape(str(token_usage.get('context_tokens_heuristic', token_usage.get('context_tokens_estimate', aggregate.get('peak_context_tokens_heuristic', aggregate.get('peak_context_tokens_estimate', 0))))))}</div>
-      <div class="lbl">peak context estimate (ours)</div>
-      <div class="sub">{escape(format_token_dual(token_usage.get('context_tokens_heuristic', token_usage.get('context_tokens_estimate', aggregate.get('peak_context_tokens_heuristic', aggregate.get('peak_context_tokens_estimate', 0)))), token_usage.get('context_tokens_tokenizer', aggregate.get('peak_context_tokens_tokenizer')), tokenizer_label_text))}</div>
+      <div class="lbl">peak context pressure</div>
+      <div class="sub">{escape(format_token_triplet(token_usage.get('context_tokens_heuristic', token_usage.get('context_tokens_estimate', aggregate.get('peak_context_tokens_heuristic', aggregate.get('peak_context_tokens_estimate', 0)))), token_usage.get('context_tokens_tokenizer', aggregate.get('peak_context_tokens_tokenizer')), tokenizer_label_text, token_usage.get('context_tokens_measured', aggregate.get('peak_context_tokens_measured')), measured_label_text))}</div>
     </div>""",
             f"""    <div class="mcard">
       <div class="val">{escape(str(hardware_usage.get('vram_peak_mb', aggregate.get('vram_peak_mb', 0))))} MB</div>
@@ -1153,6 +1176,7 @@ def build_agentic_html(data):
     context_labels = []
     context_values = []
     context_tokenizer_values = []
+    context_measured_values = []
     for idx, entry in enumerate(trace, start=1):
         value = entry.get("context_tokens_estimate")
         if value is None:
@@ -1164,10 +1188,16 @@ def build_agentic_html(data):
             if entry.get("context_tokens_tokenizer") is not None
             else None
         )
+        context_measured_values.append(
+            int(entry.get("context_tokens_measured"))
+            if entry.get("context_tokens_measured") is not None
+            else None
+        )
     if not context_labels:
         context_labels = ["no-data"]
         context_values = [0]
         context_tokenizer_values = [None]
+        context_measured_values = [None]
 
     failure_labels = json.dumps(
         ["invalid", "retries", "exec fail", "denials", "synthetic", "bad finish", "repeat bad", "false done"]
@@ -1203,6 +1233,8 @@ def build_agentic_html(data):
         context_values=json.dumps(context_values),
         context_tokenizer_values=json.dumps(context_tokenizer_values),
         context_tokenizer_label=escape(tokenizer_label_text),
+        context_measured_values=json.dumps(context_measured_values),
+        context_measured_label=escape(measured_label_text),
         failure_labels=failure_labels,
         failure_values=failure_values,
         version=escape(version),
@@ -1262,8 +1294,10 @@ def run_visualize(results_dir: str):
         timestamp = first.get("meta", {}).get("timestamp", datetime.now().isoformat())
         prompt_tokens = first.get("meta", {}).get("system_prompt_tokens_heuristic", first.get("meta", {}).get("system_prompt_tokens_approx"))
         prompt_tokens_tokenizer = first.get("meta", {}).get("system_prompt_tokens_tokenizer")
+        prompt_tokens_measured = first.get("meta", {}).get("system_prompt_tokens_measured")
         prompt_source = first.get("meta", {}).get("system_prompt_source", "unknown_prompt")
         tokenizer_label_text = first.get("meta", {}).get("tokenizer_label", "OpenAI cl100k_base")
+        measured_label_text = first.get("meta", {}).get("measured_label", "llama.cpp exact")
         token_counting = first.get("meta", {}).get("token_counting", {})
         split_config = first.get("meta", {}).get("split_config", {})
         split_summary = f"split {split_config.get('split_mode', 'layer')} (main-gpu={split_config.get('main_gpu', 0)})"
@@ -1280,6 +1314,13 @@ def run_visualize(results_dir: str):
             f"system prompt {prompt_source} ({format_token_dual(prompt_tokens, prompt_tokens_tokenizer, tokenizer_label_text)}) · "
             f"{split_summary} · tokens {token_counting.get('status', 'estimated')} "
             f"({token_counting.get('primary_method', 'char/4 heuristic')}; {token_counting.get('secondary_method', 'tokenizer unavailable')})"
+        )
+
+        system_prompt_summary = (
+            f"system prompt {prompt_source} ({format_token_triplet(prompt_tokens, prompt_tokens_tokenizer, tokenizer_label_text, prompt_tokens_measured, measured_label_text)}) · "
+            f"{split_summary} · tokens {token_counting.get('status', 'estimated')} "
+            f"({token_counting.get('primary_method', 'char/4 heuristic')}; {token_counting.get('secondary_method', 'tokenizer unavailable')}"
+            f"{('; ' + token_counting.get('tertiary_method')) if token_counting.get('tertiary_method') else ''})"
         )
 
         print(f"  found {len(by_cache)} cache type(s): {', '.join(by_cache.keys())}")
