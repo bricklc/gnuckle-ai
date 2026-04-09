@@ -302,6 +302,50 @@ new Chart(document.getElementById('accChart'), {
 )
 
 
+def _find_results_dirs(results_path: Path) -> list[Path]:
+    json_files = sorted(results_path.glob("*.json"))
+    if json_files:
+        return [results_path]
+
+    candidate_dirs = []
+    for child in results_path.iterdir():
+        if not child.is_dir():
+            continue
+        child_json = list(child.glob("*.json"))
+        if child_json:
+            newest = max(f.stat().st_mtime for f in child_json)
+            candidate_dirs.append((newest, child))
+
+    candidate_dirs.sort(key=lambda item: item[0], reverse=True)
+    return [child for _newest, child in candidate_dirs]
+
+
+def _select_results_dir(results_path: Path) -> Path | None:
+    candidates = _find_results_dirs(results_path)
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    if candidates[0] == results_path and len(candidates) == 1:
+        return results_path
+
+    print("\n  Available benchmark runs (ape see banana folders):\n")
+    for idx, candidate in enumerate(candidates, start=1):
+        json_count = len(list(candidate.glob("*.json")))
+        print(f"  [{idx}] {candidate.name}  ({json_count} json)")
+    print()
+
+    while True:
+        try:
+            choice = int(input("  ape pick run [number]: ").strip())
+        except ValueError:
+            print("  not valid. ape need folder number.")
+            continue
+        if 1 <= choice <= len(candidates):
+            return candidates[choice - 1]
+        print("  number outside banana range. ape try again.")
+
+
 def load_results(results_dir: Path):
     """Load benchmark JSON files, keeping the latest file for each cache."""
     files = sorted(results_dir.glob("benchmark_*.json"), reverse=True)
@@ -683,6 +727,15 @@ def run_visualize(results_dir: str):
         print(f"  no folder: {results_path}")
         print("  run gnuckle benchmark first. get data. then draw.")
         sys.exit(1)
+
+    resolved_results = _select_results_dir(results_path)
+    if resolved_results is None:
+        print(f"  no benchmark JSONs in: {results_path}")
+        print("  folder empty. ape no draw nothing. run benchmark first.")
+        sys.exit(1)
+    if resolved_results != results_path:
+        print(f"  ape choose run: {resolved_results.name}")
+    results_path = resolved_results
 
     ape_print("loading")
     by_cache = load_results(results_path)

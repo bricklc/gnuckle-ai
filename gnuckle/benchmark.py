@@ -191,6 +191,21 @@ def print_step(text):
     print(f"  >> {text}")
 
 
+def sanitize_label(text: str) -> str:
+    cleaned = "".join(ch.lower() if ch.isalnum() else "-" for ch in (text or "unknown"))
+    while "--" in cleaned:
+        cleaned = cleaned.replace("--", "-")
+    return cleaned.strip("-") or "unknown"
+
+
+def create_run_output_dir(base_output: Path, benchmark_mode: str, model_path: Path) -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_label = sanitize_label(model_path.stem)
+    run_dir = base_output / f"{sanitize_label(benchmark_mode)}_{model_label}_{timestamp}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+
+
 def summarize_exception(exc: Exception) -> str:
     text = str(exc).strip()
     return text or exc.__class__.__name__
@@ -1131,7 +1146,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
     session_mode = session_mode or DEFAULT_SESSION_MODE
     num_turns = num_turns if num_turns is not None else DEFAULT_TURNS
     port = port if port is not None else DEFAULT_PORT
-    output_path = Path(output_dir) if output_dir else Path.cwd() / "benchmark_results"
+    base_output_path = Path(output_dir) if output_dir else Path.cwd() / "benchmark_results"
 
     if model_path:
         model_path = Path(model_path)
@@ -1142,6 +1157,8 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
         m, s = interactive_setup(scan_dir)
         model_path  = model_path or m
         server_path = server_path or s
+
+    output_path = create_run_output_dir(base_output_path, benchmark_mode, model_path)
 
     preset = select_preset(model_path, preset_name=profile_preset, sampler_overrides=sampler_overrides)
     cache_configs = get_cache_configs(cache_labels)
