@@ -301,6 +301,181 @@ new Chart(document.getElementById('accChart'), {
 """
 )
 
+AGENTIC_HTML_TEMPLATE = Template(
+    """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>agentic benchmark dashboard - $model_name</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-sans); }
+.dash { padding: 1rem 0; }
+.header { margin-bottom: 1rem; }
+.header h1 { font-size: 18px; font-weight: 600; color: var(--color-text-primary); }
+.header .sub { font-size: 11px; color: var(--color-text-secondary); margin-top: 4px; }
+.section-label { font-size: 11px; font-weight: 500; color: var(--color-text-tertiary); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
+.metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 8px; margin-bottom: 1rem; }
+.mcard { background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 0.75rem 1rem; }
+.mcard .val { font-size: 20px; font-weight: 500; color: var(--color-text-primary); }
+.mcard .lbl { font-size: 11px; color: var(--color-text-secondary); margin-top: 2px; }
+.mcard .sub { font-size: 11px; margin-top: 4px; }
+.good { color: var(--color-text-success); }
+.warn { color: var(--color-text-warning); }
+.bad { color: var(--color-text-danger); }
+.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }
+.chart-wrap { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); padding: 1rem; }
+.chart-title { font-size: 13px; font-weight: 500; color: var(--color-text-primary); margin-bottom: 4px; }
+.chart-sub { font-size: 11px; color: var(--color-text-secondary); margin-bottom: 12px; }
+.table-wrap { overflow-x: auto; margin-top: 1rem; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { font-weight: 500; font-size: 11px; color: var(--color-text-secondary); text-align: left; padding: 6px 10px; border-bottom: 0.5px solid var(--color-border-tertiary); }
+td { padding: 7px 10px; border-bottom: 0.5px solid var(--color-border-tertiary); color: var(--color-text-primary); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+.trace-list { display: grid; gap: 0.75rem; margin-top: 1rem; }
+.trace-row { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 0.75rem; padding: 0.9rem 1rem; background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); }
+.trace-meta { font-size: 11px; color: var(--color-text-secondary); line-height: 1.5; }
+.trace-meta strong { display: block; color: var(--color-text-primary); font-size: 12px; margin-bottom: 2px; }
+.trace-body { min-width: 0; }
+.trace-block { margin-bottom: 0.45rem; }
+.trace-block:last-child { margin-bottom: 0; }
+.trace-block-label { font-size: 10px; font-weight: 600; color: var(--color-text-tertiary); letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 3px; }
+.trace-block-text { font-size: 12px; color: var(--color-text-primary); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.footer { margin-top: 1rem; font-size: 11px; color: var(--color-text-tertiary); }
+@media (max-width: 900px) {
+  .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .chart-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .metric-grid { grid-template-columns: 1fr; }
+  .trace-row { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="dash">
+  <div class="header">
+    <h1>Agentic benchmark dashboard</h1>
+    <div class="sub">$model_name &middot; $timestamp &middot; cache $cache_label &middot; workflow $workflow_title &middot; session $session_mode</div>
+  </div>
+
+  <div class="section-label">episode outcome</div>
+  <div class="metric-grid">
+$outcome_cards
+  </div>
+
+  <div class="section-label">performance and resources</div>
+  <div class="metric-grid">
+$resource_cards
+  </div>
+
+  <div class="chart-grid">
+    <div class="chart-wrap">
+      <div class="chart-title">context pressure across the trace</div>
+      <div class="chart-sub">estimated context occupancy over assistant and tool steps</div>
+      <div style="position: relative; width: 100%; height: 220px;">
+        <canvas id="contextChart"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <div class="chart-title">failure and recovery counts</div>
+      <div class="chart-sub">invalid calls, retries, execution failures, denials, and repairs</div>
+      <div style="position: relative; width: 100%; height: 220px;">
+        <canvas id="failureChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="chart-grid">
+    <div class="chart-wrap">
+      <div class="chart-title">score breakdown</div>
+      <div class="chart-sub">raw score parts kept visible for benchmark honesty</div>
+      <div class="table-wrap">
+        <table>
+$score_rows
+        </table>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <div class="chart-title">tool choice and integrity</div>
+      <div class="chart-sub">expected tools, wrong calls, and prompt retention signals</div>
+      <div class="table-wrap">
+        <table>
+$selection_rows
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="chart-wrap">
+    <div class="chart-title">agent trace timeline</div>
+    <div class="chart-sub">assistant, tool, repair, verification, and final-result flow</div>
+    <div class="trace-list">
+$trace_rows
+    </div>
+  </div>
+
+  <div class="footer">generated by gnuckle $version</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const gridColor = 'rgba(128,128,128,0.12)';
+const tickColor = '#888780';
+const tickFont = { size: 10 };
+
+new Chart(document.getElementById('contextChart'), {
+  type: 'line',
+  data: {
+    labels: $context_labels,
+    datasets: [{
+      label: 'context tokens',
+      data: $context_values,
+      borderColor: '#378ADD',
+      backgroundColor: 'transparent',
+      borderWidth: 2,
+      pointRadius: 2,
+      tension: 0.3
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { color: tickColor, font: tickFont }, grid: { color: gridColor } },
+      y: { ticks: { color: tickColor, font: tickFont }, grid: { color: gridColor } }
+    }
+  }
+});
+
+new Chart(document.getElementById('failureChart'), {
+  type: 'bar',
+  data: {
+    labels: $failure_labels,
+    datasets: [{
+      data: $failure_values,
+      backgroundColor: ['#E24B4A', '#E0A458', '#378ADD', '#6A4C93', '#888780', '#2A8C4A']
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { color: tickColor, font: tickFont }, grid: { display: false } },
+      y: { ticks: { color: tickColor, font: tickFont }, grid: { color: gridColor } }
+    }
+  }
+});
+</script>
+</body>
+</html>
+"""
+)
+
 
 def _find_results_dirs(results_path: Path) -> list[Path]:
     json_files = sorted(results_path.glob("*.json"))
@@ -361,6 +536,26 @@ def load_results(results_dir: Path):
             by_cache[label] = data
 
     return by_cache
+
+
+def load_agentic_result(results_dir: Path):
+    files = sorted(results_dir.glob("agentic_*.json"), reverse=True)
+    for file_path in files:
+        try:
+            data = json.loads(file_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if data.get("benchmark_mode") == "agentic":
+            return data
+    return None
+
+
+def detect_benchmark_mode(results_dir: Path) -> str | None:
+    if any(results_dir.glob("agentic_*.json")):
+        return "agentic"
+    if any(results_dir.glob("benchmark_*.json")):
+        return "legacy"
+    return None
 
 
 def extract_metrics(data):
@@ -710,6 +905,256 @@ def build_html(by_cache, model_name, timestamp, system_prompt_summary="system pr
     )
 
 
+def _status_class(ok):
+    return "good" if ok else "bad"
+
+
+def _trace_title(entry_type):
+    mapping = {
+        "event": "event",
+        "assistant_action": "assistant",
+        "repair_prompt": "repair",
+        "tool_call": "tool call",
+        "tool_result": "tool result",
+        "tool_retry": "retry",
+        "verification": "verification",
+        "final_result": "final result",
+    }
+    return mapping.get(entry_type, entry_type.replace("_", " "))
+
+
+def _build_agentic_trace_rows(trace):
+    rows = []
+    for idx, entry in enumerate(trace, start=1):
+        title = _trace_title(entry.get("type", "step"))
+        turn = entry.get("turn")
+        meta_lines = [f"<strong>{escape(title)}</strong>"]
+        if turn is not None:
+            meta_lines.append(f"<div>turn: {escape(str(turn))}</div>")
+        if entry.get("attempt") is not None:
+            meta_lines.append(f"<div>attempt: {escape(str(entry.get('attempt')))}</div>")
+        if entry.get("latency_ms") is not None:
+            meta_lines.append(f"<div>latency: {escape(str(entry.get('latency_ms')))} ms</div>")
+        if entry.get("context_tokens_estimate") is not None:
+            meta_lines.append(f"<div>ctx: {escape(str(entry.get('context_tokens_estimate')))} tok</div>")
+        hardware = entry.get("hardware_usage") or {}
+        if hardware.get("vram_peak_mb") is not None:
+            meta_lines.append(f"<div>vram: {escape(str(hardware.get('vram_peak_mb')))} MB</div>")
+
+        body_blocks = []
+        if entry.get("content"):
+            body_blocks.append(
+                f"""<div class="trace-block">
+  <div class="trace-block-label">content</div>
+  <div class="trace-block-text">{escape(truncate_text(entry.get("content"), 500))}</div>
+</div>"""
+            )
+        if entry.get("tool_calls"):
+            body_blocks.append(
+                f"""<div class="trace-block">
+  <div class="trace-block-label">tool calls</div>
+  <div class="trace-block-text">{escape(truncate_text(json.dumps(entry.get("tool_calls"), ensure_ascii=True), 500))}</div>
+</div>"""
+            )
+        if entry.get("arguments") is not None:
+            body_blocks.append(
+                f"""<div class="trace-block">
+  <div class="trace-block-label">arguments</div>
+  <div class="trace-block-text">{escape(truncate_text(json.dumps(entry.get("arguments"), ensure_ascii=True), 500))}</div>
+</div>"""
+            )
+        if entry.get("result") is not None:
+            body_blocks.append(
+                f"""<div class="trace-block">
+  <div class="trace-block-label">result</div>
+  <div class="trace-block-text">{escape(truncate_text(json.dumps(entry.get("result"), ensure_ascii=True), 500))}</div>
+</div>"""
+            )
+        if entry.get("reason"):
+            body_blocks.append(
+                f"""<div class="trace-block">
+  <div class="trace-block-label">reason</div>
+  <div class="trace-block-text">{escape(truncate_text(entry.get("reason"), 300))}</div>
+</div>"""
+            )
+        if entry.get("summary"):
+            body_blocks.append(
+                f"""<div class="trace-block">
+  <div class="trace-block-label">summary</div>
+  <div class="trace-block-text">{escape(truncate_text(entry.get("summary"), 300))}</div>
+</div>"""
+            )
+        if entry.get("failure_reason"):
+            body_blocks.append(
+                f"""<div class="trace-block">
+  <div class="trace-block-label">failure</div>
+  <div class="trace-block-text">{escape(str(entry.get("failure_reason")))}</div>
+</div>"""
+            )
+        if not body_blocks:
+            body_blocks.append(
+                """<div class="trace-block">
+  <div class="trace-block-label">note</div>
+  <div class="trace-block-text">(no extra payload)</div>
+</div>"""
+            )
+
+        rows.append(
+            f"""      <div class="trace-row">
+        <div class="trace-meta">
+          {''.join(meta_lines)}
+        </div>
+        <div class="trace-body">
+          {''.join(body_blocks)}
+        </div>
+      </div>"""
+        )
+    return "\n".join(rows)
+
+
+def build_agentic_html(data):
+    aggregate = data.get("aggregate", {})
+    episode = (data.get("episodes") or [{}])[0]
+    performance = episode.get("performance", {})
+    scores = episode.get("scores", {})
+    failures = episode.get("failure_events", {})
+    token_usage = episode.get("token_usage", {})
+    hardware_usage = episode.get("hardware_usage", {})
+    tool_selection = episode.get("tool_selection", {})
+    workflow = data.get("workflow", {})
+    model_name = data.get("model_id", "unknown model")
+    generated_at = data.get("generated_at", datetime.now().isoformat())
+    cache_label = data.get("cache_label", "unknown")
+    session_mode = data.get("session_mode", "unknown")
+    workflow_title = workflow.get("title", workflow.get("workflow_id", "unknown workflow"))
+    try:
+        timestamp = datetime.fromisoformat(generated_at).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        timestamp = generated_at
+
+    outcome_cards = "\n".join(
+        [
+            f"""    <div class="mcard">
+      <div class="val">{escape(str(episode.get("status", "unknown")))}</div>
+      <div class="lbl">episode status</div>
+      <div class="sub {_status_class(episode.get("status") == "completed")}">{'task held together' if episode.get('status') == 'completed' else 'ape see drift or failure'}</div>
+    </div>""",
+            f"""    <div class="mcard">
+      <div class="val">{'yes' if episode.get('task_completed') else 'no'}</div>
+      <div class="lbl">task completed</div>
+      <div class="sub {_status_class(bool(episode.get('task_completed')))}">workflow success</div>
+    </div>""",
+            f"""    <div class="mcard">
+      <div class="val">{'yes' if episode.get('verification_passed') else 'no'}</div>
+      <div class="lbl">verification passed</div>
+      <div class="sub {_status_class(bool(episode.get('verification_passed')))}">checks after finish</div>
+    </div>""",
+            f"""    <div class="mcard">
+      <div class="val">{format_num(scores.get('episode_score', 0), 3)}</div>
+      <div class="lbl">episode score</div>
+      <div class="sub {_status_class((scores.get('episode_score') or 0) >= 0.8)}">scored, not guessed</div>
+    </div>""",
+        ]
+    )
+
+    resource_cards = "\n".join(
+        [
+            f"""    <div class="mcard">
+      <div class="val">{format_num(performance.get('wall_clock_ms', 0), 0)} ms</div>
+      <div class="lbl">wall clock</div>
+      <div class="sub">avg turn {format_num(performance.get('avg_turn_latency_ms', 0), 0)} ms</div>
+    </div>""",
+            f"""    <div class="mcard">
+      <div class="val">{escape(str(token_usage.get('context_tokens_estimate', aggregate.get('peak_context_tokens_estimate', 0))))}</div>
+      <div class="lbl">peak context estimate</div>
+      <div class="sub">{escape(str(token_usage.get('context_percent_used', aggregate.get('context_percent_used', 'n/a'))))}% of window</div>
+    </div>""",
+            f"""    <div class="mcard">
+      <div class="val">{escape(str(hardware_usage.get('vram_peak_mb', aggregate.get('vram_peak_mb', 0))))} MB</div>
+      <div class="lbl">VRAM peak</div>
+      <div class="sub">steady {escape(str(hardware_usage.get('vram_steady_mb', aggregate.get('vram_steady_mb', 0))))} MB</div>
+    </div>""",
+            f"""    <div class="mcard">
+      <div class="val">{escape(str(token_usage.get('input_tokens', aggregate.get('provider_input_tokens', 0))))}/{escape(str(token_usage.get('output_tokens', aggregate.get('provider_output_tokens', 0))))}</div>
+      <div class="lbl">provider in/out tokens</div>
+      <div class="sub">total {escape(str(episode.get('provider_usage_total_tokens', aggregate.get('provider_total_tokens', 0))))}</div>
+    </div>""",
+        ]
+    )
+
+    score_rows = "\n".join(
+        [
+            f"          <tr><th>component</th><th>value</th></tr>",
+            f"          <tr><td>task success</td><td>{format_num(scores.get('task_success', 0), 3)}</td></tr>",
+            f"          <tr><td>constraint obedience</td><td>{format_num(scores.get('constraint_obedience', 0), 3)}</td></tr>",
+            f"          <tr><td>verification</td><td>{format_num(scores.get('verification', 0), 3)}</td></tr>",
+            f"          <tr><td>efficiency</td><td>{format_num(scores.get('efficiency', 0), 3)}</td></tr>",
+            f"          <tr><td>episode score</td><td>{format_num(scores.get('episode_score', 0), 3)}</td></tr>",
+        ]
+    )
+
+    selection_rows = "\n".join(
+        [
+            f"          <tr><th>field</th><th>value</th></tr>",
+            f"          <tr><td>active tools</td><td>{escape(', '.join(tool_selection.get('active_tools', [])) or 'none')}</td></tr>",
+            f"          <tr><td>expected tools</td><td>{escape(', '.join(tool_selection.get('expected_tools', [])) or 'none')}</td></tr>",
+            f"          <tr><td>tool selection precision</td><td>{format_num(tool_selection.get('tool_selection_precision', 0), 3)}</td></tr>",
+            f"          <tr><td>wrong tool calls</td><td>{escape(str(failures.get('wrong_tool_calls', 0)))}</td></tr>",
+            f"          <tr><td>unnecessary tool calls</td><td>{escape(str(failures.get('unnecessary_tool_calls', 0)))}</td></tr>",
+            f"          <tr><td>disallowed tool calls</td><td>{escape(str(failures.get('disallowed_tool_calls', 0)))}</td></tr>",
+            f"          <tr><td>failure reason</td><td>{escape(str(episode.get('failure_reason') or 'none'))}</td></tr>",
+        ]
+    )
+
+    trace = episode.get("trace", [])
+    context_labels = []
+    context_values = []
+    for idx, entry in enumerate(trace, start=1):
+        value = entry.get("context_tokens_estimate")
+        if value is None:
+            continue
+        context_labels.append(f"{entry.get('type', 'step')} {idx}")
+        context_values.append(int(value))
+    if not context_labels:
+        context_labels = ["no-data"]
+        context_values = [0]
+
+    failure_labels = json.dumps(
+        ["invalid", "retries", "exec fail", "denials", "synthetic", "bad finish"]
+    )
+    failure_values = json.dumps(
+        [
+            int(failures.get("invalid_tool_calls", 0)),
+            int(failures.get("retry_events", 0)),
+            int(failures.get("execution_failures", 0)),
+            int(failures.get("permission_denials", 0)),
+            int(failures.get("synthetic_tool_results", 0)),
+            int(failures.get("malformed_finish_events", 0)),
+        ]
+    )
+
+    version = _get_version()
+    trace_rows = _build_agentic_trace_rows(trace)
+
+    return AGENTIC_HTML_TEMPLATE.safe_substitute(
+        model_name=escape(model_name),
+        timestamp=escape(timestamp),
+        cache_label=escape(str(cache_label)),
+        workflow_title=escape(str(workflow_title)),
+        session_mode=escape(str(session_mode)),
+        outcome_cards=outcome_cards,
+        resource_cards=resource_cards,
+        score_rows=score_rows,
+        selection_rows=selection_rows,
+        trace_rows=trace_rows,
+        context_labels=json.dumps(context_labels),
+        context_values=json.dumps(context_values),
+        failure_labels=failure_labels,
+        failure_values=failure_values,
+        version=escape(version),
+    )
+
+
 def _get_version():
     try:
         from gnuckle import __version__
@@ -738,34 +1183,47 @@ def run_visualize(results_dir: str):
     results_path = resolved_results
 
     ape_print("loading")
-    by_cache = load_results(results_path)
-
-    if not by_cache:
-        print(f"  no benchmark JSONs in: {results_path}")
-        print("  folder empty. ape no draw nothing. run benchmark first.")
-        sys.exit(1)
-
-    first = next(iter(by_cache.values()))
-    model_name = first.get("meta", {}).get("model", "unknown model")
-    timestamp = first.get("meta", {}).get("timestamp", datetime.now().isoformat())
-    prompt_tokens = first.get("meta", {}).get("system_prompt_tokens_approx")
-    prompt_source = first.get("meta", {}).get("system_prompt_source", "unknown_prompt")
-    try:
-        timestamp = datetime.fromisoformat(timestamp).strftime("%Y-%m-%d %H:%M")
-    except Exception:
-        pass
-    if prompt_tokens:
-        system_prompt_summary = f"system prompt {prompt_source} (~{prompt_tokens} tok)"
+    benchmark_mode = detect_benchmark_mode(results_path)
+    if benchmark_mode == "agentic":
+        data = load_agentic_result(results_path)
+        if not data:
+            print(f"  no agentic benchmark JSONs in: {results_path}")
+            print("  folder empty. ape no draw nothing. run benchmark first.")
+            sys.exit(1)
+        print("  mode: agentic")
+        print(f"  model: {data.get('model_id', 'unknown model')}")
+        ape_print("loading")
+        html = build_agentic_html(data)
+        out_file = results_path / "agentic_benchmark_dashboard.html"
     else:
-        system_prompt_summary = f"system prompt {prompt_source}"
+        by_cache = load_results(results_path)
 
-    print(f"  found {len(by_cache)} cache type(s): {', '.join(by_cache.keys())}")
-    print(f"  model: {model_name}")
-    ape_print("loading")
+        if not by_cache:
+            print(f"  no benchmark JSONs in: {results_path}")
+            print("  folder empty. ape no draw nothing. run benchmark first.")
+            sys.exit(1)
 
-    html = build_html(by_cache, model_name, timestamp, system_prompt_summary=system_prompt_summary)
+        first = next(iter(by_cache.values()))
+        model_name = first.get("meta", {}).get("model", "unknown model")
+        timestamp = first.get("meta", {}).get("timestamp", datetime.now().isoformat())
+        prompt_tokens = first.get("meta", {}).get("system_prompt_tokens_approx")
+        prompt_source = first.get("meta", {}).get("system_prompt_source", "unknown_prompt")
+        try:
+            timestamp = datetime.fromisoformat(timestamp).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
+        if prompt_tokens:
+            system_prompt_summary = f"system prompt {prompt_source} (~{prompt_tokens} tok)"
+        else:
+            system_prompt_summary = f"system prompt {prompt_source}"
 
-    out_file = results_path / "turboquant_benchmark_dashboard.html"
+        print(f"  found {len(by_cache)} cache type(s): {', '.join(by_cache.keys())}")
+        print(f"  model: {model_name}")
+        ape_print("loading")
+
+        html = build_html(by_cache, model_name, timestamp, system_prompt_summary=system_prompt_summary)
+        out_file = results_path / "turboquant_benchmark_dashboard.html"
+
     out_file.write_text(html, encoding="utf-8")
 
     print(f"\n  dashboard saved: {out_file}")

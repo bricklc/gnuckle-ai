@@ -575,6 +575,44 @@ def get_vram_mb():
     except Exception:
         return []
 
+
+def get_process_ram_mb(pid):
+    if not pid:
+        return None
+    try:
+        if sys.platform == "win32":
+            out = subprocess.check_output(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    f"(Get-Process -Id {int(pid)} -ErrorAction Stop).WorkingSet64",
+                ],
+                stderr=subprocess.DEVNULL,
+            ).decode("utf-8", errors="ignore").strip()
+            if not out:
+                return None
+            return round(int(out) / (1024 * 1024), 1)
+        out = subprocess.check_output(
+            ["ps", "-o", "rss=", "-p", str(int(pid))],
+            stderr=subprocess.DEVNULL,
+        ).decode("utf-8", errors="ignore").strip()
+        if not out:
+            return None
+        return round(int(out.splitlines()[-1].strip()) / 1024, 1)
+    except Exception:
+        return None
+
+
+def get_hardware_snapshot(server_pid=None):
+    vram = get_vram_mb()
+    ram_mb = get_process_ram_mb(server_pid)
+    return {
+        "vram_used_mb": vram,
+        "vram_peak_mb": max(vram) if vram else 0,
+        "ram_used_mb": ram_mb,
+    }
+
 # ── STREAMING CALL ────────────────────────────────────────────────────────────
 def call_with_metrics(client, messages, port, preset=None):
     preset = preset or load_presets()["default"]
@@ -1036,7 +1074,7 @@ def interactive_setup(scan_dir=None):
 
 def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset=None,
                                workflow_suite=DEFAULT_WORKFLOW_SUITE, session_mode=DEFAULT_SESSION_MODE,
-                               max_turns=None, system_prompt=None):
+                               max_turns=None, system_prompt=None, server_pid=None):
     from gnuckle.agentic_runtime import build_agentic_run_summary, run_agentic_episode
     from gnuckle.workflow_loader import load_workflow_suite
 
@@ -1055,6 +1093,8 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
         session_mode=session_mode,
         max_turns_override=max_turns,
         system_prompt_override=system_prompt,
+        server_pid=server_pid,
+        context_window=((preset or {}).get("server_args", {}) or {}).get("ctx_size"),
     )
     summary, out_path = build_agentic_run_summary(
         workflow=workflow,
@@ -1234,6 +1274,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                         session_mode=session_mode,
                         max_turns=num_turns,
                         system_prompt=system_prompt,
+                        server_pid=getattr(server_proc, "pid", None),
                     )
                 else:
                     out = run_benchmark_pass(

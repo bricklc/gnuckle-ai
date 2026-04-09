@@ -24,6 +24,14 @@ Numbered docs live here so the order stays explicit.
   - status note for the first focused implementation slice
 - `10-openclaude-failure-handling-grounding.md`
   - minimal failure-handling rules borrowed from the OpenClaude pattern
+- `11-v2-agentic-benchmark-plan.md`
+  - purpose and scope of the v2 benchmark
+- `12-v2-benchmark-metrics.md`
+  - benchmark dimensions, leaderboard metrics, and reporting requirements for v2
+- `13-integrity-decay-and-cul.md`
+  - named definitions for Constitution Under Load, Integrity Decay Curve, and MRMB
+- `14-v2-visualizer-and-postrun-flow.md`
+  - visualizer requirements and post-run browser prompt contract
 
 Rule:
 - add new notes as `02-...`, `03-...`, `04-...`

@@ -14,7 +14,13 @@ from openai import OpenAI
 from gnuckle.agentic_types import FAILURE_REASONS, TERMINAL_STATUSES, Workflow
 from gnuckle.session_store import SessionStore
 from gnuckle.tool_executor import ToolExecutor, tool_definitions
-from gnuckle.benchmark import empty_usage, estimate_context_tokens, update_usage, usage_total_tokens
+from gnuckle.benchmark import (
+    empty_usage,
+    estimate_context_tokens,
+    get_hardware_snapshot,
+    update_usage,
+    usage_total_tokens,
+)
 
 
 MODEL = "local-model"
@@ -121,6 +127,36 @@ def _peak_context_tokens_from_trace(trace: list[dict]) -> int:
     return peak
 
 
+def _peak_vram_from_trace(trace: list[dict]) -> int:
+    peak = 0
+    for entry in trace:
+        hardware = entry.get("hardware_usage") or {}
+        value = hardware.get("vram_peak_mb")
+        if isinstance(value, (int, float)):
+            peak = max(peak, int(value))
+    return peak
+
+
+def _steady_vram_from_trace(trace: list[dict]) -> int:
+    last = 0
+    for entry in trace:
+        hardware = entry.get("hardware_usage") or {}
+        value = hardware.get("vram_peak_mb")
+        if isinstance(value, (int, float)):
+            last = int(value)
+    return last
+
+
+def _peak_ram_from_trace(trace: list[dict]) -> float:
+    peak = 0.0
+    for entry in trace:
+        hardware = entry.get("hardware_usage") or {}
+        value = hardware.get("ram_used_mb")
+        if isinstance(value, (int, float)):
+            peak = max(peak, float(value))
+    return round(peak, 1)
+
+
 def _is_retryable_tool_error(error_text: str) -> bool:
     lowered = (error_text or "").lower()
     return (
@@ -158,7 +194,8 @@ def _build_user_event_text(workflow: Workflow, workspace_dir: Path) -> str:
 
 def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, request_args: dict | None = None,
                         session_mode: str = "fresh_session", max_turns_override: int | None = None,
-                        system_prompt_override: str | None = None) -> tuple[dict, Path]:
+                        system_prompt_override: str | None = None, server_pid: int | None = None,
+                        context_window: int | None = None) -> tuple[dict, Path]:
     request_args = request_args or {}
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -203,6 +240,7 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
     failure_reason = "task_unsolved"
     status = "failed"
     final_summary = ""
+    initial_hardware = get_hardware_snapshot(server_pid)
 
     try:
         for turn_index in range(1, max_turns + 1):
@@ -236,6 +274,12 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                 message_usage = update_usage(empty_usage(), getattr(response, "usage", None))
                 total_provider_usage = update_usage(total_provider_usage, getattr(response, "usage", None))
                 context_tokens_estimate = estimate_context_tokens(messages, tool_definitions(workflow.active_tools))
+                hardware_usage = get_hardware_snapshot(server_pid)
+                context_percent_used = (
+                    round((context_tokens_estimate / max(1, int(context_window))) * 100, 2)
+                    if context_window
+                    else None
+                )
 
                 message = response.choices[0].message
                 assistant_text = _assistant_message_content(message)
@@ -249,6 +293,9 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                     provider_usage=message_usage,
                     provider_usage_total_tokens=usage_total_tokens(message_usage),
                     context_tokens_estimate=context_tokens_estimate,
+                    context_window=context_window,
+                    context_percent_used=context_percent_used,
+                    hardware_usage=hardware_usage,
                     content=assistant_text,
                     tool_calls=tool_calls,
                 )
@@ -383,6 +430,7 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                     arguments=arguments,
                     expected=tool_name in workflow.expected_tools,
                     active=tool_name in workflow.active_tools,
+                    hardware_usage=get_hardware_snapshot(server_pid),
                 )
 
                 result = executor.invoke(tool_call_id, tool_name, arguments)
@@ -400,6 +448,7 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                     tool_name=tool_name,
                     ok=result.get("ok", False),
                     result=result,
+                    hardware_usage=get_hardware_snapshot(server_pid),
                 )
                 messages.append(_tool_message(tool_call_id, result))
 
@@ -445,6 +494,9 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                         failure_reason=failure_reason,
                         task_completed=task_completed,
                         verification_passed=verification_passed,
+                        context_window=context_window,
+                        initial_hardware=initial_hardware,
+                        final_hardware=get_hardware_snapshot(server_pid),
                         turns_used=turn_index,
                         tool_calls_used=tool_calls_used,
                         trace=trace,
@@ -497,6 +549,9 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
         failure_reason=failure_reason,
         task_completed=task_completed,
         verification_passed=verification_passed,
+        context_window=context_window,
+        initial_hardware=initial_hardware,
+        final_hardware=get_hardware_snapshot(server_pid),
         turns_used=len(turn_latencies),
         tool_calls_used=tool_calls_used,
         trace=trace,
@@ -525,6 +580,7 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
 
 def _build_episode_result(episode_id: str, workflow: Workflow, session_mode: str, status: str,
                           failure_reason: str | None, task_completed: bool, verification_passed: bool,
+                          context_window: int | None, initial_hardware: dict, final_hardware: dict,
                           turns_used: int, tool_calls_used: int, trace: list[dict], wall_start: float,
                           first_action_ms: float | None, turn_latencies: list[float], tool_time_ms_total: float,
                           model_time_ms_total: float, verification_time_ms: float, total_provider_usage: dict, timeout_s: int,
@@ -550,6 +606,15 @@ def _build_episode_result(episode_id: str, workflow: Workflow, session_mode: str
         max(0.0, (tool_calls_used - wrong_tool_calls - disallowed_tool_calls) / tool_calls_used),
         3,
     ) if tool_calls_used else 1.0
+    peak_context_tokens = _peak_context_tokens_from_trace(trace)
+    peak_vram_mb = _peak_vram_from_trace(trace)
+    steady_vram_mb = _steady_vram_from_trace(trace)
+    peak_ram_mb = _peak_ram_from_trace(trace)
+    context_percent_used = (
+        round((peak_context_tokens / max(1, int(context_window))) * 100, 2)
+        if context_window
+        else None
+    )
     episode = {
         "episode_id": episode_id,
         "workflow_id": workflow.workflow_id,
@@ -572,6 +637,22 @@ def _build_episode_result(episode_id: str, workflow: Workflow, session_mode: str
         },
         "provider_usage": total_provider_usage,
         "provider_usage_total_tokens": usage_total_tokens(total_provider_usage),
+        "token_usage": {
+            "input_tokens": int(total_provider_usage.get("input_tokens", 0) or 0),
+            "output_tokens": int(total_provider_usage.get("output_tokens", 0) or 0),
+            "context_tokens_estimate": peak_context_tokens,
+            "context_window": int(context_window) if context_window else None,
+            "context_percent_used": context_percent_used,
+        },
+        "hardware_usage": {
+            "initial_vram_mb": initial_hardware.get("vram_used_mb", []),
+            "final_vram_mb": final_hardware.get("vram_used_mb", []),
+            "vram_peak_mb": peak_vram_mb,
+            "vram_steady_mb": steady_vram_mb,
+            "initial_ram_mb": initial_hardware.get("ram_used_mb"),
+            "final_ram_mb": final_hardware.get("ram_used_mb"),
+            "ram_peak_mb": peak_ram_mb,
+        },
         "scores": scores,
         "failure_events": {
             "invalid_tool_calls": invalid_tool_calls,
@@ -630,6 +711,11 @@ def build_agentic_run_summary(workflow: Workflow, episode: dict, model_name: str
         "provider_output_tokens": int(episode.get("provider_usage", {}).get("output_tokens", 0) or 0),
         "provider_total_tokens": int(episode.get("provider_usage_total_tokens", 0) or 0),
         "peak_context_tokens_estimate": _peak_context_tokens_from_trace(episode.get("trace", [])),
+        "context_window": episode.get("token_usage", {}).get("context_window"),
+        "context_percent_used": episode.get("token_usage", {}).get("context_percent_used"),
+        "vram_peak_mb": int(episode.get("hardware_usage", {}).get("vram_peak_mb", 0) or 0),
+        "vram_steady_mb": int(episode.get("hardware_usage", {}).get("vram_steady_mb", 0) or 0),
+        "ram_peak_mb": float(episode.get("hardware_usage", {}).get("ram_peak_mb", 0.0) or 0.0),
     }
     summary = {
         "run_id": run_id,
