@@ -1,6 +1,6 @@
 {
   "name": "gnuckle",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Agentic AI benchmark for llama.cpp KV cache quantization. Accidentally GNU, intentionally simian.",
   "bin": {
     "gnuckle": "./bin/gnuckle.js",
