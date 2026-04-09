@@ -317,7 +317,24 @@ def update_usage(usage, part_usage):
     return data
 
 
+def accumulate_usage(total_usage, message_usage):
+    data = empty_usage()
+    for key in data:
+        data[key] = int(total_usage.get(key, 0) or 0) + int(message_usage.get(key, 0) or 0)
+    if data["total_tokens"] <= 0:
+        data["total_tokens"] = (
+            data["input_tokens"]
+            + data["cache_creation_input_tokens"]
+            + data["cache_read_input_tokens"]
+            + data["output_tokens"]
+        )
+    return data
+
+
 def usage_total_tokens(usage):
+    explicit_total = int(usage.get("total_tokens", 0) or 0)
+    if explicit_total > 0:
+        return explicit_total
     return (
         int(usage.get("input_tokens", 0) or 0)
         + int(usage.get("cache_creation_input_tokens", 0) or 0)
@@ -344,6 +361,18 @@ def summarize_tool_choice(tool_names, expected_tools, wrong_tool_calls, disallow
     if len(expected) > 3:
         expected_preview += ",..."
     return status, f"used={used_preview}", f"want={expected_preview}"
+
+
+def get_context_window(preset=None, default_ctx_size=131072):
+    server_args = ((preset or {}).get("server_args", {}) or {})
+    for key in ("ctx_size", "ctx-size", "context_window"):
+        value = server_args.get(key)
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                pass
+    return int(default_ctx_size)
 
 @lru_cache(maxsize=1)
 def load_presets():
@@ -749,6 +778,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "wrong_tool_calls": 0,
             "unnecessary_tool_calls": 0,
             "disallowed_tool_calls": 0,
+            "repeated_bad_tool_calls": 0,
             "tool_selection_precision": 0.0,
             "provider_input_tokens": 0,
             "provider_output_tokens": 0,
@@ -766,6 +796,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
 
     vram_idle = get_vram_mb()
     print_step(f"VRAM idle: {vram_idle} MB")
+    prior_tool_signatures = set()
 
     for turn_idx in range(num_turns):
         prompt = TURN_PROMPTS[turn_idx % len(TURN_PROMPTS)]
@@ -820,7 +851,18 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
                             valid = len(missing) == 0
                             error = f"missing: {missing}" if missing else None
 
-                    tool_accuracy.append({"tool": name, "valid": valid, "error": error})
+                    signature = None
+                    if arguments is not None:
+                        signature = f"{name}:{json.dumps(arguments, sort_keys=True, ensure_ascii=True)}"
+                    tool_accuracy.append(
+                        {
+                            "tool": name,
+                            "valid": valid,
+                            "error": error,
+                            "arguments": arguments,
+                            "signature": signature,
+                        }
+                    )
                     if not valid:
                         malformed = True
                     tool_results.append(
@@ -936,12 +978,22 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             for entry in tool_accuracy
             if entry["valid"] and entry["tool"] not in expected_tools and entry["tool"] in ACTIVE_TOOL_NAMES
         )
+        unnecessary_tool_calls = 0
+        repeated_bad_tool_calls = 0
+        for entry in tool_accuracy:
+            signature = entry.get("signature")
+            if not signature:
+                continue
+            if signature in prior_tool_signatures:
+                unnecessary_tool_calls += 1
+                if entry["tool"] not in expected_tools or entry["tool"] not in ACTIVE_TOOL_NAMES:
+                    repeated_bad_tool_calls += 1
+            prior_tool_signatures.add(signature)
         disallowed_tool_calls = sum(
             1
             for entry in tool_accuracy
             if entry["tool"] not in ACTIVE_TOOL_NAMES
         )
-        unnecessary_tool_calls = wrong_tool_calls
         valid_tool_calls = sum(1 for entry in tool_accuracy if entry["valid"])
         selection_denominator = valid_tool_calls + disallowed_tool_calls
         tool_selection_precision = (
@@ -970,6 +1022,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
         results["aggregate"]["wrong_tool_calls"] += wrong_tool_calls
         results["aggregate"]["unnecessary_tool_calls"] += unnecessary_tool_calls
         results["aggregate"]["disallowed_tool_calls"] += disallowed_tool_calls
+        results["aggregate"]["repeated_bad_tool_calls"] += repeated_bad_tool_calls
         results["aggregate"]["retry_events"] += len(retry_errors)
         results["aggregate"]["provider_input_tokens"] += int(result["usage"].get("input_tokens", 0) or 0)
         results["aggregate"]["provider_output_tokens"] += int(result["usage"].get("output_tokens", 0) or 0)
@@ -1006,6 +1059,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "wrong_tool_calls":      wrong_tool_calls,
             "unnecessary_tool_calls": unnecessary_tool_calls,
             "disallowed_tool_calls": disallowed_tool_calls,
+            "repeated_bad_tool_calls": repeated_bad_tool_calls,
             "tool_selection_precision": tool_selection_precision,
             "vram_before_mb":        vram_before,
             "vram_after_mb":         vram_after,
@@ -1124,7 +1178,7 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
         max_turns_override=max_turns,
         system_prompt_override=system_prompt,
         server_pid=server_pid,
-        context_window=((preset or {}).get("server_args", {}) or {}).get("ctx_size"),
+        context_window=get_context_window(preset),
     )
     summary, out_path = build_agentic_run_summary(
         workflow=workflow,

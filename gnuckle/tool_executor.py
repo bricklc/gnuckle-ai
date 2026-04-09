@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -258,12 +259,23 @@ class ToolExecutor:
     def _edit_file(self, relative_path: str, content: str) -> dict:
         path = self._resolve_workspace_path(relative_path)
         path.parent.mkdir(parents=True, exist_ok=True)
+        before_exists = path.exists()
+        before_content = path.read_text(encoding="utf-8") if before_exists else ""
         path.write_text(content, encoding="utf-8")
+        persisted_content = path.read_text(encoding="utf-8")
         return {
             "tool": "edit_file",
             "ok": True,
             "path": relative_path,
+            "before_exists": before_exists,
+            "before_bytes": len(before_content.encode("utf-8")),
             "bytes_written": len(content.encode("utf-8")),
+            "after_bytes": len(persisted_content.encode("utf-8")),
+            "requested_content_preview": self._preview_text(content),
+            "persisted_content_preview": self._preview_text(persisted_content),
+            "before_hash": self._text_hash(before_content),
+            "after_hash": self._text_hash(persisted_content),
+            "write_match": persisted_content == content,
         }
 
     def _run_test(self) -> dict:
@@ -292,6 +304,16 @@ class ToolExecutor:
             "summary": arguments.get("summary", ""),
             "files_changed": list(arguments.get("files_changed", [])),
         }
+
+    @staticmethod
+    def _preview_text(text: str, limit: int = 240) -> str:
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3] + "..."
+
+    @staticmethod
+    def _text_hash(text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
 def tool_result_preview(result: dict) -> str:

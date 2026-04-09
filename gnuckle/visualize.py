@@ -1027,6 +1027,13 @@ def build_agentic_html(data):
     cache_label = data.get("cache_label", "unknown")
     session_mode = data.get("session_mode", "unknown")
     workflow_title = workflow.get("title", workflow.get("workflow_id", "unknown workflow"))
+    context_percent = token_usage.get("context_percent_used", aggregate.get("context_percent_used"))
+    context_percent_text = f"{context_percent}%" if context_percent is not None else "n/a"
+    total_provider_tokens = (
+        episode.get("provider_usage_total_tokens")
+        or (episode.get("provider_usage") or {}).get("total_tokens")
+        or aggregate.get("provider_total_tokens", 0)
+    )
     try:
         timestamp = datetime.fromisoformat(generated_at).strftime("%Y-%m-%d %H:%M")
     except Exception:
@@ -1067,7 +1074,7 @@ def build_agentic_html(data):
             f"""    <div class="mcard">
       <div class="val">{escape(str(token_usage.get('context_tokens_estimate', aggregate.get('peak_context_tokens_estimate', 0))))}</div>
       <div class="lbl">peak context estimate</div>
-      <div class="sub">{escape(str(token_usage.get('context_percent_used', aggregate.get('context_percent_used', 'n/a'))))}% of window</div>
+      <div class="sub">{escape(str(context_percent_text))} of window</div>
     </div>""",
             f"""    <div class="mcard">
       <div class="val">{escape(str(hardware_usage.get('vram_peak_mb', aggregate.get('vram_peak_mb', 0))))} MB</div>
@@ -1077,7 +1084,7 @@ def build_agentic_html(data):
             f"""    <div class="mcard">
       <div class="val">{escape(str(token_usage.get('input_tokens', aggregate.get('provider_input_tokens', 0))))}/{escape(str(token_usage.get('output_tokens', aggregate.get('provider_output_tokens', 0))))}</div>
       <div class="lbl">provider in/out tokens</div>
-      <div class="sub">total {escape(str(episode.get('provider_usage_total_tokens', aggregate.get('provider_total_tokens', 0))))}</div>
+      <div class="sub">total {escape(str(total_provider_tokens))}</div>
     </div>""",
         ]
     )
@@ -1102,6 +1109,8 @@ def build_agentic_html(data):
             f"          <tr><td>wrong tool calls</td><td>{escape(str(failures.get('wrong_tool_calls', 0)))}</td></tr>",
             f"          <tr><td>unnecessary tool calls</td><td>{escape(str(failures.get('unnecessary_tool_calls', 0)))}</td></tr>",
             f"          <tr><td>disallowed tool calls</td><td>{escape(str(failures.get('disallowed_tool_calls', 0)))}</td></tr>",
+            f"          <tr><td>repeated bad tool calls</td><td>{escape(str(failures.get('repeated_bad_tool_calls', 0)))}</td></tr>",
+            f"          <tr><td>false completion claims</td><td>{escape(str(failures.get('false_completion_claims', 0)))}</td></tr>",
             f"          <tr><td>failure reason</td><td>{escape(str(episode.get('failure_reason') or 'none'))}</td></tr>",
         ]
     )
@@ -1120,7 +1129,7 @@ def build_agentic_html(data):
         context_values = [0]
 
     failure_labels = json.dumps(
-        ["invalid", "retries", "exec fail", "denials", "synthetic", "bad finish"]
+        ["invalid", "retries", "exec fail", "denials", "synthetic", "bad finish", "repeat bad", "false done"]
     )
     failure_values = json.dumps(
         [
@@ -1130,6 +1139,8 @@ def build_agentic_html(data):
             int(failures.get("permission_denials", 0)),
             int(failures.get("synthetic_tool_results", 0)),
             int(failures.get("malformed_finish_events", 0)),
+            int(failures.get("repeated_bad_tool_calls", 0)),
+            int(failures.get("false_completion_claims", 0)),
         ]
     )
 

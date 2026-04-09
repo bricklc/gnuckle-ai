@@ -15,6 +15,7 @@ from gnuckle.agentic_types import FAILURE_REASONS, TERMINAL_STATUSES, Workflow
 from gnuckle.session_store import SessionStore
 from gnuckle.tool_executor import ToolExecutor, tool_definitions
 from gnuckle.benchmark import (
+    accumulate_usage,
     empty_usage,
     estimate_context_tokens,
     get_hardware_snapshot,
@@ -59,19 +60,23 @@ def _efficiency_score(turns_used: int, max_turns: int, tool_calls_used: int, wal
 
 
 def _constraint_obedience_score(invalid_tool_calls: int, malformed_finish: bool,
-                                wrong_tool_calls: int = 0, disallowed_tool_calls: int = 0) -> float:
+                                wrong_tool_calls: int = 0, disallowed_tool_calls: int = 0,
+                                false_completion_claims: int = 0, repeated_bad_tool_calls: int = 0) -> float:
     penalty = invalid_tool_calls * 0.5
     if malformed_finish:
         penalty += 0.5
     penalty += wrong_tool_calls * 0.15
     penalty += disallowed_tool_calls * 0.35
+    penalty += false_completion_claims * 0.4
+    penalty += repeated_bad_tool_calls * 0.1
     return round(max(0.0, 1.0 - penalty), 3)
 
 
 def _score_episode(task_completed: bool, verification_passed: bool, turns_used: int, max_turns: int,
                    tool_calls_used: int, wall_clock_ms: float, timeout_s: int,
                    invalid_tool_calls: int, malformed_finish: bool,
-                   wrong_tool_calls: int = 0, disallowed_tool_calls: int = 0) -> dict:
+                   wrong_tool_calls: int = 0, disallowed_tool_calls: int = 0,
+                   false_completion_claims: int = 0, repeated_bad_tool_calls: int = 0) -> dict:
     task_success = 1.0 if task_completed else 0.0
     verification = 1.0 if verification_passed else 0.0
     constraint_obedience = _constraint_obedience_score(
@@ -79,6 +84,8 @@ def _score_episode(task_completed: bool, verification_passed: bool, turns_used: 
         malformed_finish,
         wrong_tool_calls=wrong_tool_calls,
         disallowed_tool_calls=disallowed_tool_calls,
+        false_completion_claims=false_completion_claims,
+        repeated_bad_tool_calls=repeated_bad_tool_calls,
     )
     efficiency = _efficiency_score(turns_used, max_turns, tool_calls_used, wall_clock_ms, timeout_s)
     episode_score = round(
@@ -175,6 +182,10 @@ def _tool_message(tool_call_id: str, result: dict) -> dict:
     }
 
 
+def _tool_signature(name: str, arguments: dict) -> str:
+    return f"{name}:{json.dumps(arguments, sort_keys=True, ensure_ascii=True)}"
+
+
 def _build_user_event_text(workflow: Workflow, workspace_dir: Path) -> str:
     tool_list = "\n".join(f"- {tool}" for tool in workflow.active_tools)
     return (
@@ -235,12 +246,15 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
     wrong_tool_calls = 0
     unnecessary_tool_calls = 0
     disallowed_tool_calls = 0
+    repeated_bad_tool_calls = 0
+    false_completion_claims = 0
     verification_passed = False
     task_completed = False
     failure_reason = "task_unsolved"
     status = "failed"
     final_summary = ""
     initial_hardware = get_hardware_snapshot(server_pid)
+    tool_signature_counts = {}
 
     try:
         for turn_index in range(1, max_turns + 1):
@@ -272,7 +286,10 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                 if first_action_ms is None:
                     first_action_ms = latency_ms
                 message_usage = update_usage(empty_usage(), getattr(response, "usage", None))
-                total_provider_usage = update_usage(total_provider_usage, getattr(response, "usage", None))
+                total_provider_usage = accumulate_usage(
+                    total_provider_usage,
+                    message_usage,
+                )
                 context_tokens_estimate = estimate_context_tokens(messages, tool_definitions(workflow.active_tools))
                 hardware_usage = get_hardware_snapshot(server_pid)
                 context_percent_used = (
@@ -420,7 +437,14 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                     disallowed_tool_calls += 1
                 elif tool_name not in workflow.expected_tools:
                     wrong_tool_calls += 1
+
+                signature = _tool_signature(tool_name, arguments)
+                prior_count = tool_signature_counts.get(signature, 0)
+                if prior_count > 0:
                     unnecessary_tool_calls += 1
+                    if tool_name not in workflow.expected_tools or tool_name not in workflow.active_tools:
+                        repeated_bad_tool_calls += 1
+                tool_signature_counts[signature] = prior_count + 1
 
                 _append_trace(
                     trace,
@@ -461,6 +485,8 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                     verification_result = executor.execute("run_test", {})
                     verification_time_ms = round((time.perf_counter() - verification_started) * 1000, 1)
                     verification_passed = bool(verification_result.get("ok"))
+                    if not verification_passed:
+                        false_completion_claims += 1
                     _append_trace(
                         trace,
                         "verification",
@@ -518,6 +544,8 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                         wrong_tool_calls=wrong_tool_calls,
                         unnecessary_tool_calls=unnecessary_tool_calls,
                         disallowed_tool_calls=disallowed_tool_calls,
+                        repeated_bad_tool_calls=repeated_bad_tool_calls,
+                        false_completion_claims=false_completion_claims,
                         workspace_dir=workspace_dir,
                         final_summary=final_summary,
                     )
@@ -573,6 +601,8 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
         wrong_tool_calls=wrong_tool_calls,
         unnecessary_tool_calls=unnecessary_tool_calls,
         disallowed_tool_calls=disallowed_tool_calls,
+        repeated_bad_tool_calls=repeated_bad_tool_calls,
+        false_completion_claims=false_completion_claims,
         workspace_dir=workspace_dir,
         final_summary=final_summary,
     )
@@ -587,6 +617,7 @@ def _build_episode_result(episode_id: str, workflow: Workflow, session_mode: str
                           max_turns: int, invalid_tool_calls: int, retry_events: int, malformed_finish_events: int,
                           execution_failures: int, permission_denials: int, synthetic_tool_results: int,
                           wrong_tool_calls: int, unnecessary_tool_calls: int, disallowed_tool_calls: int,
+                          repeated_bad_tool_calls: int, false_completion_claims: int,
                           workspace_dir: Path, final_summary: str) -> tuple[dict, Path]:
     wall_clock_ms = round((time.perf_counter() - wall_start) * 1000, 1)
     scores = _score_episode(
@@ -601,6 +632,8 @@ def _build_episode_result(episode_id: str, workflow: Workflow, session_mode: str
         malformed_finish=malformed_finish_events > 0,
         wrong_tool_calls=wrong_tool_calls,
         disallowed_tool_calls=disallowed_tool_calls,
+        false_completion_claims=false_completion_claims,
+        repeated_bad_tool_calls=repeated_bad_tool_calls,
     )
     tool_selection_precision = round(
         max(0.0, (tool_calls_used - wrong_tool_calls - disallowed_tool_calls) / tool_calls_used),
@@ -664,6 +697,8 @@ def _build_episode_result(episode_id: str, workflow: Workflow, session_mode: str
             "wrong_tool_calls": wrong_tool_calls,
             "unnecessary_tool_calls": unnecessary_tool_calls,
             "disallowed_tool_calls": disallowed_tool_calls,
+            "repeated_bad_tool_calls": repeated_bad_tool_calls,
+            "false_completion_claims": false_completion_claims,
         },
         "tool_selection": {
             "active_tools": list(workflow.active_tools),
@@ -706,6 +741,8 @@ def build_agentic_run_summary(workflow: Workflow, episode: dict, model_name: str
         "wrong_tool_calls": int(episode.get("failure_events", {}).get("wrong_tool_calls", 0)),
         "unnecessary_tool_calls": int(episode.get("failure_events", {}).get("unnecessary_tool_calls", 0)),
         "disallowed_tool_calls": int(episode.get("failure_events", {}).get("disallowed_tool_calls", 0)),
+        "repeated_bad_tool_calls": int(episode.get("failure_events", {}).get("repeated_bad_tool_calls", 0)),
+        "false_completion_claims": int(episode.get("failure_events", {}).get("false_completion_claims", 0)),
         "tool_selection_precision": float(episode.get("tool_selection", {}).get("tool_selection_precision", 0.0)),
         "provider_input_tokens": int(episode.get("provider_usage", {}).get("input_tokens", 0) or 0),
         "provider_output_tokens": int(episode.get("provider_usage", {}).get("output_tokens", 0) or 0),

@@ -32,6 +32,13 @@ Numbered docs live here so the order stays explicit.
   - named definitions for Constitution Under Load, Integrity Decay Curve, and MRMB
 - `14-v2-visualizer-and-postrun-flow.md`
   - visualizer requirements and post-run browser prompt contract
+- `15-benchmark-system-intent.md`
+  - starting hypothesis, intent, and what the benchmark system is really testing for
+- `16-openclaude-reference-map.md`
+  - canonical source-anchor map for the OpenClaude behaviors grounding the benchmark
+
+- `memory.md`
+  - agent memory: project intent, self-correction rules, active facts (append-only, brief)
 
 Rule:
 - add new notes as `02-...`, `03-...`, `04-...`
