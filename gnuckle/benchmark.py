@@ -18,6 +18,11 @@ from openai import OpenAI
 
 from gnuckle.ape import ape_print, ape_wait, ape_phrase
 from gnuckle.profile import load_profile
+from gnuckle.system_prompt import (
+    FALLBACK_SYSTEM_PROMPT,
+    approx_token_count,
+    default_system_prompt_for_mode,
+)
 
 # ── CACHE CONFIGS TO RUN ──────────────────────────────────────────────────────
 CACHE_CONFIGS = [
@@ -40,11 +45,7 @@ MAX_MALFORMED_TOOL_RETRIES = 1
 SERVER_WAIT_S    = 60
 WARMUP_WAIT_S    = 120
 PRESETS_PATH     = Path(__file__).with_name("llama_presets.json")
-DEFAULT_SYSTEM_PROMPT = (
-    "You are a function-calling AI assistant. "
-    "Always call the appropriate tool(s) before responding. "
-    "Return tool calls as valid JSON."
-)
+DEFAULT_SYSTEM_PROMPT = FALLBACK_SYSTEM_PROMPT
 
 # ── TOOL DEFINITIONS ──────────────────────────────────────────────────────────
 TOOLS = [
@@ -226,6 +227,58 @@ def make_tool_result_message(tool_call_id, name, ok, content, error_type=None, d
         "tool_call_id": tool_call_id,
         "content": json.dumps(payload, ensure_ascii=True),
     }
+
+
+def estimate_context_tokens(messages, tools=None):
+    total_chars = 0
+    for message in messages:
+        content = message.get("content", "")
+        if isinstance(content, str):
+            total_chars += len(content)
+        elif isinstance(content, list):
+            total_chars += len(json.dumps(content, ensure_ascii=True))
+        tool_calls = message.get("tool_calls", [])
+        if tool_calls:
+            total_chars += len(json.dumps(tool_calls, ensure_ascii=True))
+    if tools:
+        total_chars += len(json.dumps(tools, ensure_ascii=True))
+    return max(1, round(total_chars / 4))
+
+
+def empty_usage():
+    return {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+    }
+
+
+def update_usage(usage, part_usage):
+    if not part_usage:
+        return usage
+    data = usage.copy()
+    for key in ("input_tokens", "output_tokens", "total_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"):
+        value = getattr(part_usage, key, None)
+        if value is None and isinstance(part_usage, dict):
+            value = part_usage.get(key)
+        if value is None:
+            continue
+        if key == "input_tokens":
+            data[key] = value if value > 0 else data[key]
+        else:
+            data[key] = value
+    return data
+
+
+def usage_total_tokens(usage):
+    return (
+        int(usage.get("input_tokens", 0) or 0)
+        + int(usage.get("cache_creation_input_tokens", 0) or 0)
+        + int(usage.get("cache_read_input_tokens", 0) or 0)
+        + int(usage.get("output_tokens", 0) or 0)
+    )
 
 
 def summarize_tool_choice(tool_names, expected_tools, wrong_tool_calls, disallowed_tool_calls):
@@ -517,6 +570,8 @@ def call_with_metrics(client, messages, port, preset=None):
     tool_chunks   = 0
     full_content  = ""
     tc_accum      = {}
+    current_usage = empty_usage()
+    context_tokens_estimate = estimate_context_tokens(messages, TOOLS)
 
     stream = client.chat.completions.create(
         model=MODEL,
@@ -524,6 +579,7 @@ def call_with_metrics(client, messages, port, preset=None):
         tools=TOOLS,
         tool_choice="auto",
         stream=True,
+        stream_options={"include_usage": True},
         temperature=request_args.get("temperature", 0.6),
         top_p=request_args.get("top_p", 0.95),
         max_tokens=512
@@ -533,6 +589,8 @@ def call_with_metrics(client, messages, port, preset=None):
         if first_token_t is None:
             first_token_t = time.perf_counter()
         delta = chunk.choices[0].delta if chunk.choices else None
+        if getattr(chunk, "usage", None) is not None:
+            current_usage = update_usage(current_usage, chunk.usage)
         if not delta:
             continue
         if delta.content:
@@ -570,11 +628,15 @@ def call_with_metrics(client, messages, port, preset=None):
         "text_tokens": text_chunks,
         "tool_call_chunks": tool_chunks,
         "elapsed_s":  round(elapsed, 3),
-        "tps":        tps
+        "tps":        tps,
+        "usage":      current_usage,
+        "usage_total_tokens": usage_total_tokens(current_usage),
+        "context_tokens_estimate": context_tokens_estimate,
     }
 
 # ── SINGLE CACHE-TYPE RUN ─────────────────────────────────────────────────────
-def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, preset=None, system_prompt=None):
+def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, preset=None, system_prompt=None,
+                       system_prompt_source="custom_inline"):
     base_url = DEFAULT_BASE_URL.format(port=port)
     client   = OpenAI(base_url=base_url, api_key=API_KEY)
     ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -588,6 +650,8 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "timestamp":   datetime.now().isoformat(),
             "sampler_preset": preset.get("name", "default") if preset else "default",
             "system_prompt": system_prompt or DEFAULT_SYSTEM_PROMPT,
+            "system_prompt_source": system_prompt_source,
+            "system_prompt_tokens_approx": approx_token_count(system_prompt or DEFAULT_SYSTEM_PROMPT),
         },
         "turns": [],
         "aggregate": {
@@ -603,6 +667,10 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "unnecessary_tool_calls": 0,
             "disallowed_tool_calls": 0,
             "tool_selection_precision": 0.0,
+            "provider_input_tokens": 0,
+            "provider_output_tokens": 0,
+            "provider_total_tokens": 0,
+            "peak_context_tokens_estimate": 0,
         },
     }
 
@@ -620,7 +688,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
         prompt = TURN_PROMPTS[turn_idx % len(TURN_PROMPTS)]
         expected_tools = LEGACY_EXPECTED_TOOLS[turn_idx % len(LEGACY_EXPECTED_TOOLS)]
         messages.append({"role": "user", "content": prompt})
-        ctx_approx = sum(len(m.get("content", "").split()) for m in messages)
+        ctx_approx = estimate_context_tokens(messages, TOOLS)
 
         result = None
         tool_accuracy = []
@@ -723,6 +791,9 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
                 "elapsed_s":             0.0,
                 "tps":                   0.0,
                 "context_tokens_approx": ctx_approx,
+                "context_tokens_estimate": ctx_approx,
+                "provider_usage":        empty_usage(),
+                "provider_usage_total_tokens": 0,
                 "tool_calls_count":      0,
                 "tool_accuracy":         [],
                 "tool_accuracy_pct":     None,
@@ -742,6 +813,10 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             results["aggregate"]["error_turns"] += 1
             results["aggregate"]["execution_failures"] += 1
             results["aggregate"]["retry_events"] += len(retry_errors)
+            results["aggregate"]["peak_context_tokens_estimate"] = max(
+                results["aggregate"]["peak_context_tokens_estimate"],
+                ctx_approx,
+            )
             print(
                 f"  Turn {turn_idx + 1:02d} | "
                 f"tps=0.0  ttft=n/a  tok=0  tools=0  acc=N/A%  "
@@ -813,6 +888,13 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
         results["aggregate"]["unnecessary_tool_calls"] += unnecessary_tool_calls
         results["aggregate"]["disallowed_tool_calls"] += disallowed_tool_calls
         results["aggregate"]["retry_events"] += len(retry_errors)
+        results["aggregate"]["provider_input_tokens"] += int(result["usage"].get("input_tokens", 0) or 0)
+        results["aggregate"]["provider_output_tokens"] += int(result["usage"].get("output_tokens", 0) or 0)
+        results["aggregate"]["provider_total_tokens"] += int(result["usage_total_tokens"])
+        results["aggregate"]["peak_context_tokens_estimate"] = max(
+            results["aggregate"]["peak_context_tokens_estimate"],
+            int(result["context_tokens_estimate"]),
+        )
 
         turn_data = {
             "turn":                  turn_idx + 1,
@@ -829,6 +911,9 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "elapsed_s":             result["elapsed_s"],
             "tps":                   result["tps"],
             "context_tokens_approx": ctx_approx,
+            "context_tokens_estimate": result["context_tokens_estimate"],
+            "provider_usage":        result["usage"],
+            "provider_usage_total_tokens": result["usage_total_tokens"],
             "tool_calls_count":      len(result["tool_calls"]),
             "tool_accuracy":         tool_accuracy,
             "tool_accuracy_pct":     acc_pct,
@@ -985,6 +1070,7 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
 
 def _print_run_banner(benchmark_mode, model_path, server_path, output_path, preset,
                       cache_configs, num_turns, workflow_suite, session_mode, system_prompt,
+                      system_prompt_source,
                       use_jinja):
     print(f"\n  Mode   : {benchmark_mode}")
     print(f"  Model  : {model_path.name}")
@@ -1000,7 +1086,10 @@ def _print_run_banner(benchmark_mode, model_path, server_path, output_path, pres
     print(f"  Preset : {preset.get('name', 'default')} - {preset.get('description', '')}")
     print(f"  Jinja  : {'on' if use_jinja else 'off'}")
     if system_prompt:
-        print("  System : custom prompt loaded")
+        print(
+            f"  System : {system_prompt_source} "
+            f"(~{approx_token_count(system_prompt)} tok)"
+        )
     ape_print("loading")
     print()
 
@@ -1028,12 +1117,14 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
         sampler_overrides = profile.get("sampler")
         cache_labels = profile.get("cache_types")
         system_prompt = profile.get("system_prompt")
+        system_prompt_source = "profile_custom" if system_prompt else None
     else:
         benchmark_mode = benchmark_mode or DEFAULT_BENCHMARK_MODE
         profile_preset = None
         sampler_overrides = None
         cache_labels = None
         system_prompt = None
+        system_prompt_source = None
 
     benchmark_mode = benchmark_mode or DEFAULT_BENCHMARK_MODE
     workflow_suite = workflow_suite or DEFAULT_WORKFLOW_SUITE
@@ -1056,6 +1147,9 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
     cache_configs = get_cache_configs(cache_labels)
     if not cache_configs:
         cache_configs = CACHE_CONFIGS
+    if not system_prompt:
+        system_prompt, system_prompt_source = default_system_prompt_for_mode(benchmark_mode)
+    system_prompt_source = system_prompt_source or "custom_inline"
 
     _print_run_banner(
         benchmark_mode=benchmark_mode,
@@ -1068,6 +1162,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
         workflow_suite=workflow_suite,
         session_mode=session_mode,
         system_prompt=system_prompt,
+        system_prompt_source=system_prompt_source,
         use_jinja=use_jinja,
     )
 
@@ -1132,6 +1227,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                         port,
                         preset=preset,
                         system_prompt=system_prompt,
+                        system_prompt_source=system_prompt_source,
                     )
                 output_files.append(out)
             except Exception as e:

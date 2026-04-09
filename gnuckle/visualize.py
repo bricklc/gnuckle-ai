@@ -100,7 +100,7 @@ tr:last-child td { border-bottom: none; }
 <div class="dash">
   <div class="header">
     <h1>TurboQuant benchmark dashboard</h1>
-    <div class="sub">$model_name &middot; $timestamp &middot; $num_turns turns per cache type &middot; $num_cache_types cache types</div>
+    <div class="sub">$model_name &middot; $timestamp &middot; $num_turns turns per cache type &middot; $num_cache_types cache types &middot; $system_prompt_summary</div>
   </div>
 
   <div class="section-label">benchmark outcomes &mdash; data from json</div>
@@ -503,7 +503,7 @@ def clamp_tick_range(values, lower_pad=2, upper_pad=2):
     return low, high
 
 
-def build_html(by_cache, model_name, timestamp):
+def build_html(by_cache, model_name, timestamp, system_prompt_summary="system prompt unknown"):
     """Generate the static dashboard HTML from benchmark JSON data."""
     ordered = [c for c in CACHE_ORDER if c in by_cache]
     ordered.extend(sorted(c for c in by_cache if c not in ordered))
@@ -636,6 +636,7 @@ def build_html(by_cache, model_name, timestamp):
     return HTML_TEMPLATE.safe_substitute(
         model_name=escape(model_name),
         timestamp=escape(timestamp),
+        system_prompt_summary=escape(system_prompt_summary),
         num_turns=num_turns,
         num_cache_types=len(ordered),
         metric_cards=metric_cards,
@@ -694,16 +695,22 @@ def run_visualize(results_dir: str):
     first = next(iter(by_cache.values()))
     model_name = first.get("meta", {}).get("model", "unknown model")
     timestamp = first.get("meta", {}).get("timestamp", datetime.now().isoformat())
+    prompt_tokens = first.get("meta", {}).get("system_prompt_tokens_approx")
+    prompt_source = first.get("meta", {}).get("system_prompt_source", "unknown_prompt")
     try:
         timestamp = datetime.fromisoformat(timestamp).strftime("%Y-%m-%d %H:%M")
     except Exception:
         pass
+    if prompt_tokens:
+        system_prompt_summary = f"system prompt {prompt_source} (~{prompt_tokens} tok)"
+    else:
+        system_prompt_summary = f"system prompt {prompt_source}"
 
     print(f"  found {len(by_cache)} cache type(s): {', '.join(by_cache.keys())}")
     print(f"  model: {model_name}")
     ape_print("loading")
 
-    html = build_html(by_cache, model_name, timestamp)
+    html = build_html(by_cache, model_name, timestamp, system_prompt_summary=system_prompt_summary)
 
     out_file = results_path / "turboquant_benchmark_dashboard.html"
     out_file.write_text(html, encoding="utf-8")

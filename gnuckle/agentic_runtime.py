@@ -14,6 +14,7 @@ from openai import OpenAI
 from gnuckle.agentic_types import FAILURE_REASONS, TERMINAL_STATUSES, Workflow
 from gnuckle.session_store import SessionStore
 from gnuckle.tool_executor import ToolExecutor, tool_definitions
+from gnuckle.benchmark import empty_usage, estimate_context_tokens, update_usage, usage_total_tokens
 
 
 MODEL = "local-model"
@@ -111,6 +112,15 @@ def _append_trace(trace: list[dict], entry_type: str, **payload) -> None:
     trace.append({"type": entry_type, **payload})
 
 
+def _peak_context_tokens_from_trace(trace: list[dict]) -> int:
+    peak = 0
+    for entry in trace:
+        value = entry.get("context_tokens_estimate")
+        if isinstance(value, (int, float)):
+            peak = max(peak, int(value))
+    return peak
+
+
 def _is_retryable_tool_error(error_text: str) -> bool:
     lowered = (error_text or "").lower()
     return (
@@ -177,6 +187,7 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
     tool_time_ms_total = 0.0
     verification_time_ms = 0.0
     turn_latencies = []
+    total_provider_usage = empty_usage()
     tool_calls_used = 0
     invalid_tool_calls = 0
     retry_events = 0
@@ -222,6 +233,9 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                 model_time_ms_total += latency_ms
                 if first_action_ms is None:
                     first_action_ms = latency_ms
+                message_usage = update_usage(empty_usage(), getattr(response, "usage", None))
+                total_provider_usage = update_usage(total_provider_usage, getattr(response, "usage", None))
+                context_tokens_estimate = estimate_context_tokens(messages, tool_definitions(workflow.active_tools))
 
                 message = response.choices[0].message
                 assistant_text = _assistant_message_content(message)
@@ -232,6 +246,9 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                     turn=turn_index,
                     attempt=attempt + 1,
                     latency_ms=latency_ms,
+                    provider_usage=message_usage,
+                    provider_usage_total_tokens=usage_total_tokens(message_usage),
+                    context_tokens_estimate=context_tokens_estimate,
                     content=assistant_text,
                     tool_calls=tool_calls,
                 )
@@ -437,6 +454,7 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                         tool_time_ms_total=tool_time_ms_total,
                         model_time_ms_total=model_time_ms_total,
                         verification_time_ms=verification_time_ms,
+                        total_provider_usage=total_provider_usage,
                         timeout_s=timeout_s,
                         max_turns=max_turns,
                         invalid_tool_calls=invalid_tool_calls,
@@ -488,6 +506,7 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
         tool_time_ms_total=tool_time_ms_total,
         model_time_ms_total=model_time_ms_total,
         verification_time_ms=verification_time_ms,
+        total_provider_usage=total_provider_usage,
         timeout_s=timeout_s,
         max_turns=max_turns,
         invalid_tool_calls=invalid_tool_calls,
@@ -508,7 +527,7 @@ def _build_episode_result(episode_id: str, workflow: Workflow, session_mode: str
                           failure_reason: str | None, task_completed: bool, verification_passed: bool,
                           turns_used: int, tool_calls_used: int, trace: list[dict], wall_start: float,
                           first_action_ms: float | None, turn_latencies: list[float], tool_time_ms_total: float,
-                          model_time_ms_total: float, verification_time_ms: float, timeout_s: int,
+                          model_time_ms_total: float, verification_time_ms: float, total_provider_usage: dict, timeout_s: int,
                           max_turns: int, invalid_tool_calls: int, retry_events: int, malformed_finish_events: int,
                           execution_failures: int, permission_denials: int, synthetic_tool_results: int,
                           wrong_tool_calls: int, unnecessary_tool_calls: int, disallowed_tool_calls: int,
@@ -551,6 +570,8 @@ def _build_episode_result(episode_id: str, workflow: Workflow, session_mode: str
             "model_time_ms_total": round(model_time_ms_total, 1),
             "verification_time_ms": round(verification_time_ms, 1),
         },
+        "provider_usage": total_provider_usage,
+        "provider_usage_total_tokens": usage_total_tokens(total_provider_usage),
         "scores": scores,
         "failure_events": {
             "invalid_tool_calls": invalid_tool_calls,
@@ -605,6 +626,10 @@ def build_agentic_run_summary(workflow: Workflow, episode: dict, model_name: str
         "unnecessary_tool_calls": int(episode.get("failure_events", {}).get("unnecessary_tool_calls", 0)),
         "disallowed_tool_calls": int(episode.get("failure_events", {}).get("disallowed_tool_calls", 0)),
         "tool_selection_precision": float(episode.get("tool_selection", {}).get("tool_selection_precision", 0.0)),
+        "provider_input_tokens": int(episode.get("provider_usage", {}).get("input_tokens", 0) or 0),
+        "provider_output_tokens": int(episode.get("provider_usage", {}).get("output_tokens", 0) or 0),
+        "provider_total_tokens": int(episode.get("provider_usage_total_tokens", 0) or 0),
+        "peak_context_tokens_estimate": _peak_context_tokens_from_trace(episode.get("trace", [])),
     }
     summary = {
         "run_id": run_id,
