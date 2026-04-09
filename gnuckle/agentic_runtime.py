@@ -716,7 +716,8 @@ def _build_episode_result(episode_id: str, workflow: Workflow, session_mode: str
 
 
 def build_agentic_run_summary(workflow: Workflow, episode: dict, model_name: str, cache_label: str,
-                              session_mode: str, output_dir: Path, workflow_suite: str = "default") -> tuple[dict, Path]:
+                              session_mode: str, output_dir: Path, workflow_suite: str = "default",
+                              split_config: dict | None = None) -> tuple[dict, Path]:
     episode_ms = episode["performance"]["wall_clock_ms"]
     turn_latency = episode["performance"]["avg_turn_latency_ms"]
     run_id = f"agentic_{cache_label}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -762,6 +763,9 @@ def build_agentic_run_summary(workflow: Workflow, episode: dict, model_name: str
         "workflow_suite": workflow_suite,
         "session_mode": session_mode,
         "generated_at": datetime.now().isoformat(),
+        "runtime_config": {
+            "split_config": split_config or {"split_mode": "layer", "main_gpu": 0, "tensor_split": None},
+        },
         "episodes": [episode],
         "aggregate": aggregate,
         "workflow": {

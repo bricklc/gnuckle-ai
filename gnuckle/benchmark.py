@@ -192,6 +192,10 @@ def print_step(text):
     print(f"  >> {text}")
 
 
+def print_info(text):
+    print(f"     {text}")
+
+
 def sanitize_label(text: str) -> str:
     cleaned = "".join(ch.lower() if ch.isalnum() else "-" for ch in (text or "unknown"))
     while "--" in cleaned:
@@ -272,6 +276,93 @@ def make_tool_result_message(tool_call_id, name, ok, content, error_type=None, d
         "tool_call_id": tool_call_id,
         "content": json.dumps(payload, ensure_ascii=True),
     }
+
+
+def detect_gpus():
+    try:
+        out = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-gpu=index,name,memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            stderr=subprocess.DEVNULL,
+        ).decode("utf-8", errors="ignore").strip().splitlines()
+        gpus = []
+        for line in out:
+            parts = [part.strip() for part in line.split(",")]
+            if len(parts) < 3:
+                continue
+            try:
+                index = int(parts[0])
+                memory_total_mb = int(parts[2])
+            except ValueError:
+                continue
+            gpus.append(
+                {
+                    "index": index,
+                    "name": parts[1],
+                    "memory_total_mb": memory_total_mb,
+                }
+            )
+        return gpus
+    except Exception:
+        return []
+
+
+def prompt_split_mode(gpus):
+    if len(gpus) <= 1:
+        return {
+            "split_mode": "none",
+            "main_gpu": gpus[0]["index"] if gpus else 0,
+            "tensor_split": None,
+        }
+
+    print("\n  ape see many GPUs. ape want --split-mode?\n")
+    for gpu in gpus:
+        print(f"  [{gpu['index']}] {gpu['name']}  ({gpu['memory_total_mb']} MB)")
+    print()
+    print("  split modes from llama.cpp:")
+    print_info("none  : use one GPU only. best when one card can hold the useful workload.")
+    print_info("layer : split layers and KV across GPUs. default multi-GPU choice; best first thing to try.")
+    print_info("row   : split rows across GPUs. advanced mode; main GPU also handles intermediate results and KV.")
+    print()
+
+    options = {"1": "none", "2": "layer", "3": "row"}
+    while True:
+        print("  [1] none")
+        print("  [2] layer")
+        print("  [3] row")
+        choice = input("  ape pick split mode [1-3]: ").strip()
+        split_mode = options.get(choice)
+        if split_mode:
+            break
+        print("  bad banana. pick again.")
+
+    config = {
+        "split_mode": split_mode,
+        "main_gpu": 0,
+        "tensor_split": None,
+    }
+
+    if split_mode in {"none", "row"}:
+        print()
+        print(f"  main GPU matters for split-mode={split_mode}.")
+        print_info("none : main GPU is the one GPU used for the model.")
+        print_info("row  : main GPU handles intermediate results and KV.")
+        while True:
+            choice = input("  ape pick main GPU index: ").strip()
+            try:
+                main_gpu = int(choice)
+            except ValueError:
+                print("  bad banana. enter a GPU index.")
+                continue
+            if any(gpu["index"] == main_gpu for gpu in gpus):
+                config["main_gpu"] = main_gpu
+                break
+            print("  ape no see that GPU index.")
+
+    return config
 
 
 def estimate_context_tokens(messages, tools=None):
@@ -588,16 +679,20 @@ def kill_server(proc):
         time.sleep(2)
 
 def start_server(server_path: Path, model_path: Path, cache_k: str, cache_v: str, port: int,
-                 preset=None, use_jinja=True):
+                 preset=None, use_jinja=True, split_config=None):
     preset = preset or select_preset(model_path)
+    split_config = split_config or {}
+    split_mode = split_config.get("split_mode", "layer")
+    main_gpu = split_config.get("main_gpu", 0)
+    tensor_split = split_config.get("tensor_split")
     cmd = [
         str(server_path),
         "-m",               str(model_path),
         "--host",           "0.0.0.0",
         "--port",           str(port),
         "-ngl",             "99",
-        "--split-mode",     "layer",
-        "--main-gpu",       "0",
+        "--split-mode",     str(split_mode),
+        "--main-gpu",       str(main_gpu),
         "--ctx-size",       "131072",
         "--cache-type-k",   cache_k,
         "--cache-type-v",   cache_v,
@@ -606,11 +701,14 @@ def start_server(server_path: Path, model_path: Path, cache_k: str, cache_v: str
         "--top-k",          "20",
         "--repeat-penalty", "1.1",
     ]
+    if tensor_split:
+        cmd.extend(["--tensor-split", str(tensor_split)])
     if use_jinja:
         append_unique_flag(cmd, "--jinja")
     cmd.extend(build_llama_args(preset.get("server_args", {})))
     print_step(f"starting server: cache-k={cache_k} cache-v={cache_v}")
     print_step(f"preset: {preset.get('name', 'default')}")
+    print_step(f"split-mode: {split_mode} (main-gpu={main_gpu})")
     ape_print("loading")
     kwargs = {}
     if sys.platform != "win32":
@@ -748,11 +846,12 @@ def call_with_metrics(client, messages, port, preset=None):
 
 # ── SINGLE CACHE-TYPE RUN ─────────────────────────────────────────────────────
 def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, preset=None, system_prompt=None,
-                       system_prompt_source="custom_inline"):
+                       system_prompt_source="custom_inline", split_config=None):
     base_url = DEFAULT_BASE_URL.format(port=port)
     client   = OpenAI(base_url=base_url, api_key=API_KEY)
     ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_file = output_dir / f"benchmark_{cache_label}_{ts}.json"
+    split_config = split_config or {"split_mode": "layer", "main_gpu": 0, "tensor_split": None}
 
     results = {
         "meta": {
@@ -764,6 +863,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "system_prompt": system_prompt or DEFAULT_SYSTEM_PROMPT,
             "system_prompt_source": system_prompt_source,
             "system_prompt_tokens_approx": approx_token_count(system_prompt or DEFAULT_SYSTEM_PROMPT),
+            "split_config": split_config,
         },
         "turns": [],
         "aggregate": {
@@ -1153,12 +1253,13 @@ def interactive_setup(scan_dir=None):
     if not server_path:
         server_path = prompt_server_path()
 
-    return model_path, server_path
+    split_config = prompt_split_mode(detect_gpus())
+    return model_path, server_path, split_config
 
 
 def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset=None,
                                workflow_suite=DEFAULT_WORKFLOW_SUITE, session_mode=DEFAULT_SESSION_MODE,
-                               max_turns=None, system_prompt=None, server_pid=None):
+                               max_turns=None, system_prompt=None, server_pid=None, split_config=None):
     from gnuckle.agentic_runtime import build_agentic_run_summary, run_agentic_episode
     from gnuckle.workflow_loader import load_workflow_suite
 
@@ -1188,6 +1289,7 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
         session_mode=session_mode,
         output_dir=output_dir,
         workflow_suite=workflow_suite,
+        split_config=split_config,
     )
     print(
         f"  Episode | status={episode['status']}  "
@@ -1210,7 +1312,8 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
 def _print_run_banner(benchmark_mode, model_path, server_path, output_path, preset,
                       cache_configs, num_turns, workflow_suite, session_mode, system_prompt,
                       system_prompt_source,
-                      use_jinja):
+                      use_jinja, split_config=None):
+    split_config = split_config or {}
     print(f"\n  Mode   : {benchmark_mode}")
     print(f"  Model  : {model_path.name}")
     print(f"  Server : {server_path}")
@@ -1224,6 +1327,7 @@ def _print_run_banner(benchmark_mode, model_path, server_path, output_path, pres
     print(f"  Output : {output_path}{os.sep}")
     print(f"  Preset : {preset.get('name', 'default')} - {preset.get('description', '')}")
     print(f"  Jinja  : {'on' if use_jinja else 'off'}")
+    print(f"  Split  : {split_config.get('split_mode', 'layer')} (main-gpu={split_config.get('main_gpu', 0)})")
     if system_prompt:
         print(
             f"  System : {system_prompt_source} "
@@ -1250,6 +1354,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
         port = port if port is not None else profile.get("port")
         workflow_suite = workflow_suite or profile.get("workflow_suite")
         session_mode = session_mode or profile.get("session_mode")
+        split_config = profile.get("split_config")
         if profile.get("use_jinja") is not None:
             use_jinja = bool(profile.get("use_jinja"))
         profile_preset = profile.get("sampler_preset")
@@ -1264,6 +1369,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
         cache_labels = None
         system_prompt = None
         system_prompt_source = None
+        split_config = None
 
     benchmark_mode = benchmark_mode or DEFAULT_BENCHMARK_MODE
     workflow_suite = workflow_suite or DEFAULT_WORKFLOW_SUITE
@@ -1278,9 +1384,21 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
         server_path = Path(server_path)
 
     if not model_path or not server_path:
-        m, s = interactive_setup(scan_dir)
+        m, s, interactive_split_config = interactive_setup(scan_dir)
         model_path  = model_path or m
         server_path = server_path or s
+        split_config = split_config or interactive_split_config
+
+    if split_config is None:
+        gpus = detect_gpus()
+        if len(gpus) > 1:
+            split_config = prompt_split_mode(gpus)
+
+    split_config = split_config or {
+        "split_mode": "layer",
+        "main_gpu": 0,
+        "tensor_split": None,
+    }
 
     output_path = create_run_output_dir(base_output_path, benchmark_mode, model_path)
 
@@ -1305,6 +1423,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
         system_prompt=system_prompt,
         system_prompt_source=system_prompt_source,
         use_jinja=use_jinja,
+        split_config=split_config,
     )
 
     confirm = input("  ape smash Enter to start [y/n]: ").strip().lower()
@@ -1333,6 +1452,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                 port,
                 preset=preset,
                 use_jinja=use_jinja,
+                split_config=split_config,
             )
 
             if not wait_for_server(port):
@@ -1360,6 +1480,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                         max_turns=num_turns,
                         system_prompt=system_prompt,
                         server_pid=getattr(server_proc, "pid", None),
+                        split_config=split_config,
                     )
                 else:
                     out = run_benchmark_pass(
@@ -1371,6 +1492,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                         preset=preset,
                         system_prompt=system_prompt,
                         system_prompt_source=system_prompt_source,
+                        split_config=split_config,
                     )
                 output_files.append(out)
             except Exception as e:

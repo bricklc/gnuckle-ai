@@ -1027,6 +1027,8 @@ def build_agentic_html(data):
     cache_label = data.get("cache_label", "unknown")
     session_mode = data.get("session_mode", "unknown")
     workflow_title = workflow.get("title", workflow.get("workflow_id", "unknown workflow"))
+    split_config = (data.get("runtime_config") or {}).get("split_config", {})
+    split_summary = f"{split_config.get('split_mode', 'layer')} (main-gpu={split_config.get('main_gpu', 0)})"
     context_percent = token_usage.get("context_percent_used", aggregate.get("context_percent_used"))
     context_percent_text = f"{context_percent}%" if context_percent is not None else "n/a"
     total_provider_tokens = (
@@ -1105,6 +1107,7 @@ def build_agentic_html(data):
             f"          <tr><th>field</th><th>value</th></tr>",
             f"          <tr><td>active tools</td><td>{escape(', '.join(tool_selection.get('active_tools', [])) or 'none')}</td></tr>",
             f"          <tr><td>expected tools</td><td>{escape(', '.join(tool_selection.get('expected_tools', [])) or 'none')}</td></tr>",
+            f"          <tr><td>split config</td><td>{escape(split_summary)}</td></tr>",
             f"          <tr><td>tool selection precision</td><td>{format_num(tool_selection.get('tool_selection_precision', 0), 3)}</td></tr>",
             f"          <tr><td>wrong tool calls</td><td>{escape(str(failures.get('wrong_tool_calls', 0)))}</td></tr>",
             f"          <tr><td>unnecessary tool calls</td><td>{escape(str(failures.get('unnecessary_tool_calls', 0)))}</td></tr>",
@@ -1219,14 +1222,16 @@ def run_visualize(results_dir: str):
         timestamp = first.get("meta", {}).get("timestamp", datetime.now().isoformat())
         prompt_tokens = first.get("meta", {}).get("system_prompt_tokens_approx")
         prompt_source = first.get("meta", {}).get("system_prompt_source", "unknown_prompt")
+        split_config = first.get("meta", {}).get("split_config", {})
+        split_summary = f"split {split_config.get('split_mode', 'layer')} (main-gpu={split_config.get('main_gpu', 0)})"
         try:
             timestamp = datetime.fromisoformat(timestamp).strftime("%Y-%m-%d %H:%M")
         except Exception:
             pass
         if prompt_tokens:
-            system_prompt_summary = f"system prompt {prompt_source} (~{prompt_tokens} tok)"
+            system_prompt_summary = f"system prompt {prompt_source} (~{prompt_tokens} tok) · {split_summary}"
         else:
-            system_prompt_summary = f"system prompt {prompt_source}"
+            system_prompt_summary = f"system prompt {prompt_source} · {split_summary}"
 
         print(f"  found {len(by_cache)} cache type(s): {', '.join(by_cache.keys())}")
         print(f"  model: {model_name}")

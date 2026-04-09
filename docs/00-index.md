@@ -36,6 +36,8 @@ Numbered docs live here so the order stays explicit.
   - starting hypothesis, intent, and what the benchmark system is really testing for
 - `16-openclaude-reference-map.md`
   - canonical source-anchor map for the OpenClaude behaviors grounding the benchmark
+- `17-personal-productivity-benchmark-workflows.md`
+  - five personal-use agentic workflows (journal, notes, agenda, CUL, commitment tracking)
 
 - `memory.md`
   - agent memory: project intent, self-correction rules, active facts (append-only, brief)
