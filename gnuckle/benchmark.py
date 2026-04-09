@@ -11,6 +11,7 @@ import os
 import signal
 import socket
 import copy
+import webbrowser
 from pathlib import Path
 from datetime import datetime
 from functools import lru_cache
@@ -204,6 +205,35 @@ def create_run_output_dir(base_output: Path, benchmark_mode: str, model_path: Pa
     run_dir = base_output / f"{sanitize_label(benchmark_mode)}_{model_label}_{timestamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
     return run_dir
+
+
+def format_elapsed(elapsed_s: float) -> str:
+    if elapsed_s < 60:
+        return f"{round(elapsed_s, 1)} seconds"
+    minutes = int(elapsed_s // 60)
+    seconds = round(elapsed_s % 60, 1)
+    if seconds == 0:
+        return f"{minutes} minutes"
+    return f"{minutes} minutes {seconds} seconds"
+
+
+def prompt_open_visualizer(output_path: Path, elapsed_s: float) -> None:
+    from gnuckle.visualize import run_visualize
+
+    print()
+    choice = input(
+        f"  benchmark is complete. it took {format_elapsed(elapsed_s)}. "
+        "do you want to open the visualizer now? [y/n]: "
+    ).strip().lower()
+    out_file = run_visualize(str(output_path))
+    if choice in ("y", ""):
+        try:
+            webbrowser.open(out_file.resolve().as_uri())
+            print("  visualizer open in browser. ape look at charts.")
+        except Exception:
+            print(f"  visualizer banana is saved in {out_file} for viewing later.")
+    else:
+        print(f"  visualizer banana is saved in {out_file} for viewing later.")
 
 
 def summarize_exception(exc: Exception) -> str:
@@ -1230,6 +1260,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
 
     output_files = []
     server_proc  = None
+    benchmark_started = time.perf_counter()
 
     try:
         for i, cfg in enumerate(cache_configs):
@@ -1309,8 +1340,12 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
     for f in output_files:
         print(f"  {f.name}")
     print(f"\n  results in: {output_path}{os.sep}")
-    if benchmark_mode == "legacy":
-        print(f"  next step: gnuckle visualize {output_path}{os.sep}")
+    elapsed_s = time.perf_counter() - benchmark_started
+    if output_files:
+        prompt_open_visualizer(output_path, elapsed_s)
     else:
-        print("  next step: inspect the agentic run json. ape read trace carefully.")
+        if benchmark_mode == "legacy":
+            print(f"  next step: gnuckle visualize {output_path}{os.sep}")
+        else:
+            print("  next step: inspect the agentic run json. ape read trace carefully.")
     print()

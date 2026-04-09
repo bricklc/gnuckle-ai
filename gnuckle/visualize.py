@@ -1228,3 +1228,4 @@ def run_visualize(results_dir: str):
 
     print(f"\n  dashboard saved: {out_file}")
     print("  open in browser. look at charts. yes. good.")
+    return out_file
