@@ -81,6 +81,11 @@ def main() -> None:
         action="store_true",
         help="create a git tag v<version> after updating versions",
     )
+    parser.add_argument(
+        "--install",
+        action="store_true",
+        help="reinstall editable and verify with python -m gnuckle --version",
+    )
     args = parser.parse_args()
 
     current = read_current_version()
@@ -106,6 +111,15 @@ def main() -> None:
     if args.tag:
         run_git(["tag", f"v{new_version}"])
         print(f"created tag: v{new_version}")
+
+    if args.install:
+        import sys
+        subprocess.run([sys.executable, "-m", "pip", "install", "-e", str(ROOT)], cwd=ROOT, check=True)
+        result = subprocess.run([sys.executable, "-m", "gnuckle", "--version"], cwd=ROOT, capture_output=True, text=True)
+        reported = result.stdout.strip()
+        if new_version not in reported:
+            raise SystemExit(f"version mismatch after install: expected {new_version}, got: {reported}")
+        print(f"verified: {reported}")
 
     print("next:")
     print("  git push origin main")
