@@ -4,13 +4,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from gnuckle.agentic_types import Workflow, WorkflowSuccessRule, WorkflowVerification
+from gnuckle.agentic_types import MidTaskInjection, Workflow, WorkflowSuccessRule, WorkflowVerification
 from gnuckle.tool_executor import ToolExecutor, tool_definitions
 
 
 def make_workflow(
     active_tools: list[str],
     denied_tools: list[str] | None = None,
+    supports_plaintext_turns: bool = False,
+    mid_task_injections: list[MidTaskInjection] | None = None,
 ) -> Workflow:
     return Workflow(
         workflow_id="test_workflow",
@@ -35,8 +37,8 @@ def make_workflow(
         max_turns=4,
         timeout_s=30,
         run_count=1,
-        supports_plaintext_turns=False,
-        mid_task_injections=[],
+        supports_plaintext_turns=supports_plaintext_turns,
+        mid_task_injections=list(mid_task_injections or []),
         sampler_config={},
         verification=WorkflowVerification(required=False, method="manual", command=[]),
         success_rule=WorkflowSuccessRule(type="manual"),

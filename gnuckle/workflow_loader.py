@@ -41,7 +41,16 @@ def _err(workflow_id: str, field: str, msg: str) -> ManifestError:
 
 def _load_raw_manifest() -> dict:
     with WORKFLOWS_PATH.open("r", encoding="utf-8") as f:
-        return json.load(f)
+        manifest = json.load(f)
+    try:
+        from gnuckle.benchmark_workflows import benchmark_manifest
+
+        extra = benchmark_manifest()
+        manifest.setdefault("suites", {}).update(extra.get("suites", {}))
+        manifest.setdefault("workflows", []).extend(extra.get("workflows", []))
+    except Exception:
+        pass
+    return manifest
 
 
 def _validate_workflow(raw: dict) -> None:

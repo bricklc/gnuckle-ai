@@ -5,3 +5,11 @@ Available schedule:
 - 13:00-14:00 open
 - 14:00-15:00 blocked: all-hands
 - 15:00-17:00 open
+
+Operator notes:
+- The first open block is best for focused validation work before meetings fragment attention.
+- Midday open time is usually enough for one substantial communications task if it is already outlined.
+- The late afternoon block is the safest place for cleanup work, evidence collection, and archival tasks that do not depend on live stakeholder responses.
+- If a task needs stakeholder confirmation, avoid placing it entirely inside the final hour of the day because delays are common after 16:00.
+- The noon boundary matters because another operator may need a quick status handoff before lunch.
+- The blocked meetings are fixed and cannot be repurposed even if one ends early.

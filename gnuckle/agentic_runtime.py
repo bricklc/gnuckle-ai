@@ -37,6 +37,15 @@ def _fixture_root(fixture_name: str) -> Path:
     return _package_root() / "fixtures" / fixture_name
 
 
+def _prompt_weight_filler(variant: str | None) -> str:
+    if not variant:
+        return ""
+    path = _package_root() / "fixtures" / "benchmark_shared" / "prompt_weight" / f"{variant}.md"
+    if not path.is_file():
+        return ""
+    return path.read_text(encoding="utf-8").strip()
+
+
 def prepare_workspace(workflow: Workflow, output_dir: Path) -> Path:
     source = _fixture_root(workflow.fixture)
     if not source.is_dir():
@@ -221,6 +230,38 @@ def _tool_signature(name: str, arguments: dict) -> str:
     return f"{name}:{json.dumps(arguments, sort_keys=True, ensure_ascii=True)}"
 
 
+def _injection_metrics(trace: list[dict]) -> dict:
+    injections = [
+        {
+            "turn": int(entry.get("turn", 0) or 0),
+            "content": entry.get("content", ""),
+            "absorbed": False,
+            "response_turn": None,
+        }
+        for entry in trace
+        if entry.get("type") == "mid_task_injection"
+    ]
+    assistant_turns = [
+        int(entry.get("turn", 0) or 0)
+        for entry in trace
+        if entry.get("type") in {"assistant_action", "plaintext_turn"}
+    ]
+    for injection in injections:
+        response_turn = next((turn for turn in assistant_turns if turn > injection["turn"]), None)
+        injection["response_turn"] = response_turn
+        injection["absorbed"] = response_turn is not None
+
+    delivered = len(injections)
+    absorbed = sum(1 for injection in injections if injection["absorbed"])
+    return {
+        "scheduled": delivered,
+        "delivered": delivered,
+        "absorbed": absorbed,
+        "absorption_rate": round(absorbed / delivered, 3) if delivered else None,
+        "events": injections,
+    }
+
+
 def _build_user_event_text(workflow: Workflow, workspace_dir: Path) -> str:
     tool_list = "\n".join(f"- {tool}" for tool in workflow.active_tools)
     parts = [
@@ -290,6 +331,9 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
     timeout_s = workflow.timeout_s
 
     system_prompt = (system_prompt_override or workflow.system_prompt).strip()
+    prompt_weight_filler = _prompt_weight_filler(workflow.prompt_weight_variant)
+    if prompt_weight_filler:
+        system_prompt = f"{system_prompt}\n\n{prompt_weight_filler}".strip()
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(session.messages)
     user_event = _build_user_event_text(workflow, workspace_dir)
@@ -725,6 +769,7 @@ def _build_episode_result(episode_id: str, workflow: Workflow, session_mode: str
                           repeated_bad_tool_calls: int, false_completion_claims: int,
                           workspace_dir: Path, final_summary: str) -> tuple[dict, Path]:
     wall_clock_ms = round((time.perf_counter() - wall_start) * 1000, 1)
+    injection_metrics = _injection_metrics(trace)
     scores = _score_episode(
         task_completed=task_completed,
         verification_passed=verification_passed,
@@ -815,6 +860,7 @@ def _build_episode_result(episode_id: str, workflow: Workflow, session_mode: str
             "repeated_bad_tool_calls": repeated_bad_tool_calls,
             "false_completion_claims": false_completion_claims,
         },
+        "injection_metrics": injection_metrics,
         "tool_selection": {
             "active_tools": list(workflow.active_tools),
             "expected_tools": list(workflow.expected_tools),
@@ -859,6 +905,9 @@ def build_agentic_run_summary(workflow: Workflow, episode: dict, model_name: str
         "disallowed_tool_calls": int(episode.get("failure_events", {}).get("disallowed_tool_calls", 0)),
         "repeated_bad_tool_calls": int(episode.get("failure_events", {}).get("repeated_bad_tool_calls", 0)),
         "false_completion_claims": int(episode.get("failure_events", {}).get("false_completion_claims", 0)),
+        "injections_delivered": int(episode.get("injection_metrics", {}).get("delivered", 0) or 0),
+        "injections_absorbed": int(episode.get("injection_metrics", {}).get("absorbed", 0) or 0),
+        "injection_absorption_rate": episode.get("injection_metrics", {}).get("absorption_rate"),
         "tool_selection_precision": float(episode.get("tool_selection", {}).get("tool_selection_precision", 0.0)),
         "provider_input_tokens": int(episode.get("provider_usage", {}).get("input_tokens", 0) or 0),
         "provider_output_tokens": int(episode.get("provider_usage", {}).get("output_tokens", 0) or 0),

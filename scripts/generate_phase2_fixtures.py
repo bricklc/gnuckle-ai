@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from gnuckle.system_prompt import tokenizer_token_count
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES_ROOT = REPO_ROOT / "gnuckle" / "fixtures"
@@ -19,6 +21,11 @@ def write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
 
 
+def write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content.strip() + "\n", encoding="utf-8")
+
+
 def repeat_block(title: str, lines: list[str], repeat_count: int) -> str:
     parts: list[str] = []
     for idx in range(1, repeat_count + 1):
@@ -27,7 +34,61 @@ def repeat_block(title: str, lines: list[str], repeat_count: int) -> str:
 
 
 def build_prompt_weight_filler(target_tokens: int) -> str:
-    intro = f"""# Assistant Runtime Filler ({target_tokens} token target)
+    if target_tokens <= 100:
+        text = """# Runtime Filler
+
+## Rules
+- Inspect the workspace before acting.
+- Prefer deterministic file operations over guesswork.
+- Never claim a side effect that the tools did not produce.
+
+## Memory
+- Thursday family call.
+- Concise summaries.
+
+## Tool Notes
+- read_file before write_file when structure is unclear.
+- finish only after the bounded task is actually complete.
+
+## Reminder
+- keep trace behavior auditable under small prompt load.
+"""
+        while (tokenizer_token_count(text) or 0) < target_tokens:
+            text += "\n- verify the workspace state before ending the turn."
+        return text
+    elif target_tokens <= 500:
+        intro = """# Assistant Runtime Filler
+
+## AGENTS
+- Inspect the workspace before acting.
+- Prefer deterministic file operations over guesswork.
+- Keep reasoning bounded and auditable.
+- Never claim a side effect that the tools did not produce.
+
+## Memory
+- User studies thermodynamics on weekday evenings.
+- User has a standing Thursday family call.
+- User prefers concise summaries with explicit next steps.
+- User keeps a separate journal and task index.
+
+## Skills Index
+- planning
+- calendar-synthesis
+- note-triage
+- workspace-convention-discovery
+
+## Tool Definitions
+### Tool 01: list_files
+path: required string
+### Tool 02: read_file
+path: required string
+### Tool 03: write_file
+path and content required
+### Tool 04: finish
+summary required
+"""
+    else:
+        intro = f"""# Assistant Runtime Filler ({target_tokens} token target)
 
 ## AGENTS
 - Inspect the workspace before acting.
@@ -106,15 +167,18 @@ properties: text (string, required), labels (array, required)
         "- Treat notes, plans, and memory facts as deterministic inputs rather than suggestions.",
         "- Record enough evidence in the final artifact that scoring can audit the result later.",
     ]
-    if target_tokens <= 100:
-        return intro
-    desired_words = max(target_tokens, 140)
-    repeated = repeat_block("Guidance Block", filler_lines, max(1, desired_words // 80))
-    text = intro + "\n\n" + repeated
-    words = len(text.split())
-    while words < desired_words:
-        text += "\n\n" + repeat_block("Trace Discipline", filler_lines, 2)
-        words = len(text.split())
+    text = intro
+    block_index = 0
+    while (tokenizer_token_count(text) or 0) < target_tokens:
+        block_index += 1
+        text += "\n\n" + repeat_block(
+            f"Guidance Block {block_index}",
+            filler_lines,
+            1 if target_tokens <= 500 else 4,
+        )
+    while (tokenizer_token_count(text) or 0) > target_tokens + 30:
+        lines = text.splitlines()
+        text = "\n".join(lines[:-6]).strip()
     return text
 
 
@@ -256,18 +320,29 @@ Read this note and create summary.md with three bullets:
 - Post-patch verification must include login and billing smoke tests.
 """)
 
-    write_if_missing(core / "cb_12_chained_execution" / "brief.txt", """
+    write_text(core / "cb_12_chained_execution" / "brief.txt", """
 Project Atlas has four deliverables that must be sequenced into a one-day execution plan.
 The plan should prioritize urgent items, avoid blocked schedule windows, and cover every deliverable exactly once.
 Stakeholders expect a simple markdown artifact that another operator could follow without extra context.
+The day is shared with adjacent operational work, so a reader should be able to scan the final plan and understand what must happen first, what can slide later, and which tasks cannot be dropped.
+Leadership only cares about coverage, ordering, and blocked-window avoidance; they do not need long narrative explanation, but they do need the sequence to be explicit enough that a backup operator could take over at noon without re-planning from scratch.
+Assume the operator will read brief.txt, inputs.txt, schedule.txt, and constraints.txt once, then execute straight from the produced markdown plan.
 """)
-    write_if_missing(core / "cb_12_chained_execution" / "inputs.txt", """
+    write_text(core / "cb_12_chained_execution" / "inputs.txt", """
 - Database backup validation [urgent]
 - Draft launch comms
 - Vendor risk review [urgent]
 - Archive old test data
+- Confirm whether the backup validation needs a rollback checkpoint before the noon handoff.
+- Launch comms should be drafted early enough that legal can skim it before close of business.
+- Vendor risk review needs a short evidence note attached for the operations lead.
+- Archiving old test data can happen late, but it still has to appear in the one-day plan.
+- Backup validation is considered incomplete unless the checksum review and the restore spot-check are both named in the day plan.
+- Draft launch comms should leave enough time for one revision pass after the first review comment lands.
+- Vendor risk review cannot be treated as a passive read; it needs explicit time for evidence gathering and a short write-up.
+- Archive work is lower risk than the urgent items, but leadership still wants it visible because the storage cap is getting close.
 """)
-    write_if_missing(core / "cb_12_chained_execution" / "schedule.txt", """
+    write_text(core / "cb_12_chained_execution" / "schedule.txt", """
 Available schedule:
 - 09:00-10:00 open
 - 10:00-11:00 blocked: finance review
@@ -275,13 +350,27 @@ Available schedule:
 - 13:00-14:00 open
 - 14:00-15:00 blocked: all-hands
 - 15:00-17:00 open
+
+Operator notes:
+- The first open block is best for focused validation work before meetings fragment attention.
+- Midday open time is usually enough for one substantial communications task if it is already outlined.
+- The late afternoon block is the safest place for cleanup work, evidence collection, and archival tasks that do not depend on live stakeholder responses.
+- If a task needs stakeholder confirmation, avoid placing it entirely inside the final hour of the day because delays are common after 16:00.
+- The noon boundary matters because another operator may need a quick status handoff before lunch.
+- The blocked meetings are fixed and cannot be repurposed even if one ends early.
 """)
-    write_if_missing(core / "cb_12_chained_execution" / "constraints.txt", """
+    write_text(core / "cb_12_chained_execution" / "constraints.txt", """
 Rules:
 1. Urgent items must appear before any non-urgent item.
 2. No task may be assigned to a blocked slot.
 3. Every item from inputs.txt must appear in plan.md.
 4. Use one markdown bullet per scheduled item.
+5. If a task has an obvious dependency, reflect that by placing its prerequisite earlier in the day.
+6. Keep wording operational and concrete; the final plan should read like a handoff-ready execution list, not a brainstorming note.
+7. When two urgent items are both present, the one with the higher operational risk should appear first.
+8. If a task includes a review or evidence note, that requirement should be obvious from the scheduled line item rather than implied.
+9. The final markdown should be usable by another operator without needing the original source files open beside it.
+10. Avoid vague placeholders like \"follow up later\" unless the exact follow-up target is named.
 """)
 
     write_if_missing(life / "wf_b_note_triage" / "meeting_alpha.txt", """
@@ -317,8 +406,10 @@ Maybe test a weekly dinner rotation board for the apartment floor. It only works
 Met with the warehouse team. They need updated labels for aisle C before Friday. Someone should confirm whether the spare barcode printer still works.
 """)
 
-    write_if_missing(life / "wf_c_daily_agenda" / "today.txt", """
+    write_text(life / "wf_c_daily_agenda" / "today.txt", """
 Today is crowded. I need to stretch and do my rehab exercises before work because my shoulder still feels tight. I also need to finish the Q2 roadmap draft, send the vendor follow-up email, and pick up groceries. I promised my mom I would call tonight, but I do not want anything scheduled past 8 PM. I also need to review the budget spreadsheet before tomorrow's meeting.
+My energy is usually best in the first half of the day, so if there is anything that needs focused thinking it should probably land before lunch. I do not want the groceries too early because the market near me opens properly mid-morning, but I also do not want them pushed so late that they collide with dinner or the family call. If there are conflicts, I want them flagged instead of hidden.
+Yesterday already spilled over more than I wanted, so anything unfinished from that plan should be carried forward deliberately instead of disappearing. The rehab work is not optional; if the schedule is tight, that should still stay at the top because the shoulder has been getting worse on days when I skip it.
 """)
     write_if_missing(life / "wf_c_daily_agenda" / "yesterday.txt", """
 Morning
@@ -659,7 +750,7 @@ Use this exact structure:
         write_json(path, payload)
 
     for size in (100, 500, 2000, 6000, 12000):
-        write_if_missing(shared / f"{size}.md", build_prompt_weight_filler(size))
+        write_text(shared / f"{size}.md", build_prompt_weight_filler(size))
 
 
 if __name__ == "__main__":

@@ -45,7 +45,7 @@ MODEL            = "local-model"
 DEFAULT_TURNS    = 20
 DEFAULT_PORT     = 8080
 DEFAULT_BENCHMARK_MODE = "legacy"
-DEFAULT_WORKFLOW_SUITE = "default"
+DEFAULT_WORKFLOW_SUITE = "benchmark"
 DEFAULT_SESSION_MODE = "fresh_session"
 MAX_MALFORMED_TOOL_RETRIES = 1
 SERVER_WAIT_S    = 60
@@ -1460,67 +1460,112 @@ def interactive_setup(scan_dir=None):
 def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset=None,
                                workflow_suite=DEFAULT_WORKFLOW_SUITE, session_mode=DEFAULT_SESSION_MODE,
                                max_turns=None, system_prompt=None, server_pid=None, split_config=None):
-    from gnuckle.agentic_runtime import build_agentic_run_summary, run_agentic_episode
+    from gnuckle.agentic_runtime import run_agentic_episode
+    from gnuckle.benchmark_scoring import aggregate_workflow_runs, assign_type, finalize_benchmark_summary
     from gnuckle.workflow_loader import load_workflow_suite
 
     workflows = load_workflow_suite(workflow_suite)
     if not workflows:
         raise ValueError(f"workflow suite has no workflows: {workflow_suite}")
 
-    last_out_path = None
-    for wf_index, workflow in enumerate(workflows, 1):
-        run_count = workflow.run_count
-        print_step(f"workflow {wf_index}/{len(workflows)}: {workflow.workflow_id} ({workflow.title})")
-        print(f"  Layer  : {workflow.benchmark_layer}" + (f" [{workflow.profile_id}]" if workflow.profile_id else ""))
-        print(f"  Scoring: {workflow.scoring_method}  runs: {run_count}  plaintext: {workflow.supports_plaintext_turns}")
-        print(f"  Sampler: temp={workflow.sampler_config.get('temperature')} top_p={workflow.sampler_config.get('top_p')} top_k={workflow.sampler_config.get('top_k')} rp={workflow.sampler_config.get('repeat_penalty')}")
-        if workflow.mid_task_injections:
-            print(f"  Inject : {len(workflow.mid_task_injections)} mid-task injection(s)")
-        print_step(f"session: {session_mode}")
+    def run_group(group, label):
+        summaries = []
+        for wf_index, workflow in enumerate(group, 1):
+            run_count = workflow.run_count
+            print_step(f"{label} workflow {wf_index}/{len(group)}: {workflow.workflow_id} ({workflow.title})")
+            print(f"  Layer  : {workflow.benchmark_layer}" + (f" [{workflow.profile_id}]" if workflow.profile_id else ""))
+            print(f"  Scoring: {workflow.scoring_method}  runs: {run_count}  plaintext: {workflow.supports_plaintext_turns}")
+            print(f"  Sampler: temp={workflow.sampler_config.get('temperature')} top_p={workflow.sampler_config.get('top_p')} top_k={workflow.sampler_config.get('top_k')} rp={workflow.sampler_config.get('repeat_penalty')}")
+            if workflow.mid_task_injections:
+                print(f"  Inject : {len(workflow.mid_task_injections)} mid-task injection(s)")
+            if workflow.prompt_weight_variant:
+                print(f"  Prompt : weight variant {workflow.prompt_weight_variant}")
+            if workflow.denied_tools:
+                print(f"  Denied : {', '.join(workflow.denied_tools)}")
+            print_step(f"session: {session_mode}")
 
-        for run_num in range(1, run_count + 1):
-            if run_count > 1:
-                print_step(f"run {run_num}/{run_count}")
-
-            episode, _workspace_dir = run_agentic_episode(
-                base_url=DEFAULT_BASE_URL.format(port=port),
-                workflow=workflow,
-                output_dir=output_dir,
-                request_args=(preset or {}).get("request_args", {}),
-                session_mode=session_mode,
-                max_turns_override=max_turns,
-                system_prompt_override=system_prompt,
-                server_pid=server_pid,
-                context_window=get_context_window(preset),
-            )
-            summary, out_path = build_agentic_run_summary(
-                workflow=workflow,
-                episode=episode,
-                model_name=model_path.name,
-                cache_label=cache_label,
-                session_mode=session_mode,
-                output_dir=output_dir,
-                workflow_suite=workflow_suite,
-                split_config=split_config,
-            )
+            episodes = []
+            for run_num in range(1, run_count + 1):
+                if run_count > 1:
+                    print_step(f"run {run_num}/{run_count}")
+                episode, _workspace_dir = run_agentic_episode(
+                    base_url=DEFAULT_BASE_URL.format(port=port),
+                    workflow=workflow,
+                    output_dir=output_dir,
+                    request_args=(preset or {}).get("request_args", {}),
+                    session_mode=session_mode,
+                    max_turns_override=max_turns,
+                    system_prompt_override=system_prompt,
+                    server_pid=server_pid,
+                    context_window=get_context_window(preset),
+                )
+                print(
+                    f"  Episode | status={episode['status']}  "
+                    f"success={episode['task_completed']}  "
+                    f"verify={episode['verification_passed']}  "
+                    f"turns={episode['turns_used']}  "
+                    f"tools={episode['tool_calls_used']}  "
+                    f"ms={episode['performance']['wall_clock_ms']}"
+                )
+                episodes.append(episode)
+            summary = aggregate_workflow_runs(workflow, episodes)
+            summaries.append(summary)
             print(
-                f"  Episode | status={episode['status']}  "
-                f"success={episode['task_completed']}  "
-                f"verify={episode['verification_passed']}  "
-                f"turns={episode['turns_used']}  "
-                f"tools={episode['tool_calls_used']}  "
-                f"ms={episode['performance']['wall_clock_ms']}"
+                f"  Score   | mean={summary['workflow_score_mean']:.3f}  "
+                f"std={summary['workflow_score_stddev']:.3f}  runs={summary['run_count']}"
             )
-            print(
-                f"  Scores  | episode={episode['scores']['episode_score']:.3f}  "
-                f"task={episode['scores']['task_success']:.3f}  "
-                f"verify={episode['scores']['verification']:.3f}  "
-                f"eff={episode['scores']['efficiency']:.3f}"
-            )
-            print_step(f"saved: {out_path.name}")
-            last_out_path = out_path
+        return summaries
 
-    return last_out_path
+    diagnostics = [workflow for workflow in workflows if workflow.benchmark_layer == "diagnostic"]
+    non_diagnostics = [workflow for workflow in workflows if workflow.benchmark_layer != "diagnostic"]
+
+    diagnostic_summaries = run_group(diagnostics, "diagnostic") if diagnostics else []
+    benchmark_type = assign_type({item["workflow_id"]: item["workflow_score_mean"] for item in diagnostic_summaries})
+
+    selected = []
+    deferred_variants = []
+    for workflow in non_diagnostics:
+        if workflow.benchmark_layer == "diagnostic_variant":
+            deferred_variants.append(workflow)
+            continue
+        if workflow.benchmark_layer == "core":
+            selected.append(workflow)
+            continue
+        if workflow.benchmark_layer == "profile":
+            if benchmark_type == "Type 0":
+                continue
+            if benchmark_type == "Type 1" and workflow.difficulty.lower() == "hard":
+                continue
+            selected.append(workflow)
+
+    workflow_summaries = run_group(selected, "benchmark")
+    core_summaries = [item for item in workflow_summaries if item["benchmark_layer"] == "core" and item["workflow_id"] != "cb_08_resource_viability"]
+    core_score = (sum(item["workflow_score_mean"] for item in core_summaries) / len(core_summaries)) if core_summaries else 0.0
+    if benchmark_type == "Type 2" and core_score > 0.85:
+        benchmark_type = "Type 3"
+
+    if benchmark_type == "Type 3" and deferred_variants:
+        workflow_summaries.extend(run_group(deferred_variants, "stress"))
+
+    summary = finalize_benchmark_summary(
+        workflow_summaries=workflow_summaries,
+        diagnostics=diagnostic_summaries,
+        cache_label=cache_label,
+        model_name=model_path.name,
+        session_mode=session_mode,
+        workflow_suite=workflow_suite,
+        runtime_config={
+            "split_config": split_config or {"split_mode": "layer", "main_gpu": 0, "tensor_split": None},
+            "token_counting": token_counting_info(
+                exact_available=probe_llamacpp_exact(DEFAULT_BASE_URL.format(port=port))
+            ),
+        },
+        generated_at=datetime.now().isoformat(),
+    )
+    out_path = output_dir / f"agentic_{sanitize_label(cache_label)}.json"
+    out_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    print_step(f"saved: {out_path.name}")
+    return out_path
 
 
 def _print_run_banner(benchmark_mode, model_path, server_path, output_path, preset,

@@ -3,3 +3,9 @@ Rules:
 2. No task may be assigned to a blocked slot.
 3. Every item from inputs.txt must appear in plan.md.
 4. Use one markdown bullet per scheduled item.
+5. If a task has an obvious dependency, reflect that by placing its prerequisite earlier in the day.
+6. Keep wording operational and concrete; the final plan should read like a handoff-ready execution list, not a brainstorming note.
+7. When two urgent items are both present, the one with the higher operational risk should appear first.
+8. If a task includes a review or evidence note, that requirement should be obvious from the scheduled line item rather than implied.
+9. The final markdown should be usable by another operator without needing the original source files open beside it.
+10. Avoid vague placeholders like "follow up later" unless the exact follow-up target is named.

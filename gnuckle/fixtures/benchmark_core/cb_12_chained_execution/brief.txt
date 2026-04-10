@@ -1,3 +1,6 @@
 Project Atlas has four deliverables that must be sequenced into a one-day execution plan.
 The plan should prioritize urgent items, avoid blocked schedule windows, and cover every deliverable exactly once.
 Stakeholders expect a simple markdown artifact that another operator could follow without extra context.
+The day is shared with adjacent operational work, so a reader should be able to scan the final plan and understand what must happen first, what can slide later, and which tasks cannot be dropped.
+Leadership only cares about coverage, ordering, and blocked-window avoidance; they do not need long narrative explanation, but they do need the sequence to be explicit enough that a backup operator could take over at noon without re-planning from scratch.
+Assume the operator will read brief.txt, inputs.txt, schedule.txt, and constraints.txt once, then execute straight from the produced markdown plan.

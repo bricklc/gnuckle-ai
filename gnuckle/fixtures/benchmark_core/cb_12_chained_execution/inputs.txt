@@ -2,3 +2,11 @@
 - Draft launch comms
 - Vendor risk review [urgent]
 - Archive old test data
+- Confirm whether the backup validation needs a rollback checkpoint before the noon handoff.
+- Launch comms should be drafted early enough that legal can skim it before close of business.
+- Vendor risk review needs a short evidence note attached for the operations lead.
+- Archiving old test data can happen late, but it still has to appear in the one-day plan.
+- Backup validation is considered incomplete unless the checksum review and the restore spot-check are both named in the day plan.
+- Draft launch comms should leave enough time for one revision pass after the first review comment lands.
+- Vendor risk review cannot be treated as a passive read; it needs explicit time for evidence gathering and a short write-up.
+- Archive work is lower risk than the urgent items, but leadership still wants it visible because the storage cap is getting close.
