@@ -646,14 +646,6 @@ def truncate_text(text, limit=220):
     return compact[: limit - 3].rstrip() + "..."
 
 
-def format_token_dual(heuristic, tokenizer, tokenizer_label_text="OpenAI cl100k_base", measured=None, measured_label_text="llama.cpp exact"):
-    ours = f"ours {heuristic}" if heuristic is not None else "ours n/a"
-    theirs = (
-        f"{tokenizer_label_text} {tokenizer}"
-        if tokenizer is not None
-        else f"{tokenizer_label_text} unavailable"
-    )
-    return f"{ours} · {theirs}"
 def format_token_triplet(heuristic, tokenizer, tokenizer_label_text="OpenAI cl100k_base", measured=None, measured_label_text="llama.cpp exact"):
     ours = f"ours {heuristic}" if heuristic is not None else "ours n/a"
     theirs = (
@@ -1305,17 +1297,6 @@ def run_visualize(results_dir: str):
             timestamp = datetime.fromisoformat(timestamp).strftime("%Y-%m-%d %H:%M")
         except Exception:
             pass
-        if prompt_tokens:
-            system_prompt_summary = f"system prompt {prompt_source} (~{prompt_tokens} tok) · {split_summary}"
-        else:
-            system_prompt_summary = f"system prompt {prompt_source} · {split_summary}"
-
-        system_prompt_summary = (
-            f"system prompt {prompt_source} ({format_token_dual(prompt_tokens, prompt_tokens_tokenizer, tokenizer_label_text)}) · "
-            f"{split_summary} · tokens {token_counting.get('status', 'estimated')} "
-            f"({token_counting.get('primary_method', 'char/4 heuristic')}; {token_counting.get('secondary_method', 'tokenizer unavailable')})"
-        )
-
         system_prompt_summary = (
             f"system prompt {prompt_source} ({format_token_triplet(prompt_tokens, prompt_tokens_tokenizer, tokenizer_label_text, prompt_tokens_measured, measured_label_text)}) · "
             f"{split_summary} · tokens {token_counting.get('status', 'estimated')} "

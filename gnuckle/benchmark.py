@@ -398,6 +398,14 @@ def llamacpp_tokenizer_label() -> str:
     return "llama.cpp exact"
 
 
+def probe_llamacpp_exact(base_url: str | None) -> bool:
+    """Probe whether the llama.cpp server supports /tokenize. Returns True only on success."""
+    if not base_url:
+        return False
+    data = _post_json(f"{server_root_url(base_url)}/tokenize", {"content": "probe"})
+    return isinstance(data, dict) and isinstance(data.get("tokens"), list)
+
+
 def llamacpp_text_token_count(base_url: str | None, text: str) -> int | None:
     if not base_url:
         return None
@@ -873,6 +881,7 @@ def get_hardware_snapshot(server_pid=None):
 def call_with_metrics(client, messages, port, preset=None, base_url: str | None = None):
     preset = preset or load_presets()["default"]
     request_args = preset.get("request_args", {})
+    context_counts = estimate_context_token_counts(messages, TOOLS, base_url=base_url)
     t_send        = time.perf_counter()
     first_token_t = None
     text_chunks   = 0
@@ -880,7 +889,6 @@ def call_with_metrics(client, messages, port, preset=None, base_url: str | None 
     full_content  = ""
     tc_accum      = {}
     current_usage = empty_usage()
-    context_counts = estimate_context_token_counts(messages, TOOLS, base_url=base_url)
 
     stream = client.chat.completions.create(
         model=MODEL,
@@ -958,6 +966,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
                        system_prompt_source="custom_inline", split_config=None):
     base_url = DEFAULT_BASE_URL.format(port=port)
     client   = OpenAI(base_url=base_url, api_key=API_KEY)
+    exact_available = probe_llamacpp_exact(base_url)
     ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_file = output_dir / f"benchmark_{cache_label}_{ts}.json"
     split_config = split_config or {"split_mode": "layer", "main_gpu": 0, "tensor_split": None}
@@ -978,7 +987,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "system_prompt_tokens_measured": prompt_counts["measured"],
             "tokenizer_label": prompt_counts["tokenizer_label"],
             "measured_label": prompt_counts["measured_label"],
-            "token_counting": token_counting_info(exact_available=True),
+            "token_counting": token_counting_info(exact_available=exact_available),
             "split_config": split_config,
         },
         "turns": [],
@@ -1002,7 +1011,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "peak_context_tokens_estimate": 0,
             "peak_context_tokens_heuristic": 0,
             "peak_context_tokens_tokenizer": 0,
-            "peak_context_tokens_measured": 0,
+            "peak_context_tokens_measured": None,
         },
     }
 
@@ -1177,8 +1186,9 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
                     int(ctx_counts["tokenizer"]),
                 )
             if ctx_counts["measured"] is not None:
+                prev = results["aggregate"]["peak_context_tokens_measured"]
                 results["aggregate"]["peak_context_tokens_measured"] = max(
-                    results["aggregate"]["peak_context_tokens_measured"],
+                    prev if prev is not None else 0,
                     int(ctx_counts["measured"]),
                 )
             print(
@@ -1280,8 +1290,9 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
                 int(result["context_tokens_tokenizer"]),
             )
         if result["context_tokens_measured"] is not None:
+            prev = results["aggregate"]["peak_context_tokens_measured"]
             results["aggregate"]["peak_context_tokens_measured"] = max(
-                results["aggregate"]["peak_context_tokens_measured"],
+                prev if prev is not None else 0,
                 int(result["context_tokens_measured"]),
             )
 
@@ -1470,8 +1481,9 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
 def _print_run_banner(benchmark_mode, model_path, server_path, output_path, preset,
                       cache_configs, num_turns, workflow_suite, session_mode, system_prompt,
                       system_prompt_source,
-                      use_jinja, split_config=None):
+                      use_jinja, split_config=None, base_url=None):
     split_config = split_config or {}
+    exact_available = probe_llamacpp_exact(base_url)
     print(f"\n  Mode   : {benchmark_mode}")
     print(f"  Model  : {model_path.name}")
     print(f"  Server : {server_path}")
@@ -1486,16 +1498,17 @@ def _print_run_banner(benchmark_mode, model_path, server_path, output_path, pres
     print(f"  Preset : {preset.get('name', 'default')} - {preset.get('description', '')}")
     print(f"  Jinja  : {'on' if use_jinja else 'off'}")
     print(f"  Split  : {split_config.get('split_mode', 'layer')} (main-gpu={split_config.get('main_gpu', 0)})")
-    counting = token_counting_info(exact_available=True)
+    counting = token_counting_info(exact_available=exact_available)
     tertiary = f"; {counting['tertiary_method']}" if counting.get("tertiary_method") else ""
     print(f"  Tokens : {counting['status']} ({counting['primary_method']}; {counting['secondary_method']}{tertiary})")
     if system_prompt:
-        prompt_counts = prompt_token_counts(system_prompt)
-        measured_count = prompt_counts["measured"] if prompt_counts["measured"] is not None else "pending"
+        prompt_counts = prompt_token_counts(system_prompt, base_url=base_url)
+        measured_str = str(prompt_counts["measured"]) if prompt_counts["measured"] is not None else "unavailable"
         print(
             f"  System : {system_prompt_source} "
             f"({prompt_counts['heuristic']} ours · "
-            f"{prompt_counts['tokenizer'] if prompt_counts['tokenizer'] is not None else 'unavailable'} {prompt_counts['tokenizer_label']})"
+            f"{prompt_counts['tokenizer'] if prompt_counts['tokenizer'] is not None else 'unavailable'} {prompt_counts['tokenizer_label']} · "
+            f"{measured_str} {prompt_counts['measured_label']})"
         )
     ape_print("loading")
     print()
@@ -1588,6 +1601,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
         system_prompt_source=system_prompt_source,
         use_jinja=use_jinja,
         split_config=split_config,
+        base_url=DEFAULT_BASE_URL.format(port=port),
     )
 
     confirm = input("  ape smash Enter to start [y/n]: ").strip().lower()

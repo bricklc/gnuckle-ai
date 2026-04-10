@@ -43,3 +43,4 @@ Context is treated as a scarce budget. Failure is preserved as data, not a kill 
 2026-04-10 - Context-pressure metrics are benchmark-valid as `measured` only when the llama.cpp exact path succeeds; otherwise they must remain labeled `estimated` with uncertainty.
 2026-04-10 - `--split-mode` is benchmark-wide runtime configuration for any current or future benchmark mode that launches local `llama-server`.
 2026-04-10 - The OpenClaude-inspired benchmark core is: persistent transcript loop, fixed visible tool list, in-band tool failures, verification before success, separate usage versus context accounting, and trace integrity.
+2026-04-10 - Ape commit summaries use a fixed structure: short `title`, then ape-voice `body` with `🍌` bullets for concrete changes and short `have X, yes, good.` outcome lines.

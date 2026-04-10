@@ -824,7 +824,9 @@ def build_agentic_run_summary(workflow: Workflow, episode: dict, model_name: str
         "generated_at": datetime.now().isoformat(),
         "runtime_config": {
             "split_config": split_config or {"split_mode": "layer", "main_gpu": 0, "tensor_split": None},
-            "token_counting": token_counting_info(exact_available=True),
+            "token_counting": token_counting_info(
+                exact_available=_peak_context_measured_from_trace(episode.get("trace", [])) is not None
+            ),
         },
         "episodes": [episode],
         "aggregate": aggregate,
