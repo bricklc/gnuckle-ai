@@ -231,11 +231,12 @@ def _build_user_event_text(workflow: Workflow, workspace_dir: Path) -> str:
         "Rules:",
         "- You may only call tools from the active tools list.",
         "- Use tools instead of guessing file contents.",
-        "- Call run_test before finish.",
-        "- Call finish only when the workspace is ready.",
+        "- Call finish only when the task is complete.",
         "- If a tool fails, inspect the tool result and continue.",
         "- Keep the final summary concise.",
     ]
+    if "run_test" in workflow.active_tools:
+        parts.insert(-2, "- Call run_test before finish.")
     if workflow.standing_rules:
         parts.append("Standing rules:")
         for rule in workflow.standing_rules:
@@ -249,6 +250,27 @@ def _pending_injection(workflow: Workflow, turn_index: int) -> str | None:
         if inj.after_turn == turn_index:
             return inj.text
     return None
+
+
+def _run_verification(executor: ToolExecutor, workflow: Workflow) -> dict:
+    if not workflow.verification.required:
+        return {
+            "tool": "verification",
+            "ok": True,
+            "method": workflow.verification.method,
+            "skipped": True,
+            "reason": "verification_not_required",
+        }
+    if workflow.verification.method == "run_test":
+        return executor.execute("run_test", {})
+    return {
+        "tool": "verification",
+        "ok": False,
+        "method": workflow.verification.method,
+        "skipped": False,
+        "error_type": "unsupported_verification_method",
+        "error": f"unsupported verification method: {workflow.verification.method}",
+    }
 
 
 def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, request_args: dict | None = None,
@@ -559,7 +581,7 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                 if tool_name == "finish":
                     final_summary = result.get("summary", "")
                     verification_started = time.perf_counter()
-                    verification_result = executor.execute("run_test", {})
+                    verification_result = _run_verification(executor, workflow)
                     verification_time_ms = round((time.perf_counter() - verification_started) * 1000, 1)
                     verification_passed = bool(verification_result.get("ok"))
                     if not verification_passed:
@@ -882,6 +904,7 @@ def build_agentic_run_summary(workflow: Workflow, episode: dict, model_name: str
             "reporting_tags": workflow.reporting_tags,
             "prompt_weight_variant": workflow.prompt_weight_variant,
             "tool_denial_expectation": workflow.tool_denial_expectation,
+            "denied_tools": workflow.denied_tools,
         },
         "sampler_config": workflow.sampler_config,
     }

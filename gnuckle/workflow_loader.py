@@ -75,10 +75,16 @@ def _validate_workflow(raw: dict) -> None:
     # --- tools ---
     active_tools = raw.get("active_tools", raw.get("allowed_tools", []))
     expected_tools = raw.get("expected_tools", raw.get("allowed_tools", []))
+    denied_tools = raw.get("denied_tools") or []
     if not isinstance(active_tools, list) or not active_tools:
         raise _err(wid, "active_tools", "must be a non-empty list")
     if not isinstance(expected_tools, list) or not expected_tools:
         raise _err(wid, "expected_tools", "must be a non-empty list")
+    if not isinstance(denied_tools, list):
+        raise _err(wid, "denied_tools", "must be a list when present")
+    invalid_denied = sorted(tool for tool in denied_tools if tool not in active_tools)
+    if invalid_denied:
+        raise _err(wid, "denied_tools", f"must be a subset of active_tools, got {invalid_denied}")
 
     # --- benchmark_layer ---
     layer = raw.get("benchmark_layer", "core")
@@ -185,6 +191,7 @@ def enumerate_benchmark_workflows(suite_name: str = "default") -> list[dict]:
             "supports_plaintext_turns": wf.supports_plaintext_turns,
             "injection_count": len(wf.mid_task_injections),
             "sampler_config": wf.sampler_config,
+            "denied_tools": wf.denied_tools,
         }
         for wf in wfs
     ]

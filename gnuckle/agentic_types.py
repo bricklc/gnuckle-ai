@@ -93,6 +93,7 @@ class Workflow:
     # --- tools ---
     active_tools: list[str]
     expected_tools: list[str]
+    denied_tools: list[str]
     expected_trace_pattern: list[str]
 
     # --- execution ---
@@ -148,6 +149,7 @@ class Workflow:
             standing_rules=list(data.get("standing_rules") or []),
             active_tools=list(data.get("active_tools") or data["allowed_tools"]),
             expected_tools=list(data.get("expected_tools") or data["allowed_tools"]),
+            denied_tools=list(data.get("denied_tools") or []),
             expected_trace_pattern=list(data.get("expected_trace_pattern") or []),
             max_turns=int(data["max_turns"]),
             timeout_s=int(data.get("timeout_s", 180)),
