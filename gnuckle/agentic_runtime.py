@@ -223,19 +223,32 @@ def _tool_signature(name: str, arguments: dict) -> str:
 
 def _build_user_event_text(workflow: Workflow, workspace_dir: Path) -> str:
     tool_list = "\n".join(f"- {tool}" for tool in workflow.active_tools)
-    return (
-        f"{workflow.event_text}\n\n"
-        f"Workspace root: {workspace_dir}\n"
-        "Active tools:\n"
-        f"{tool_list}\n"
-        "Rules:\n"
-        "- You may only call tools from the active tools list.\n"
-        "- Use tools instead of guessing file contents.\n"
-        "- Call run_test before finish.\n"
-        "- Call finish only when the workspace is ready.\n"
-        "- If a tool fails, inspect the tool result and continue.\n"
-        "- Keep the final summary concise.\n"
-    )
+    parts = [
+        f"{workflow.event_text}\n",
+        f"Workspace root: {workspace_dir}",
+        "Active tools:",
+        tool_list,
+        "Rules:",
+        "- You may only call tools from the active tools list.",
+        "- Use tools instead of guessing file contents.",
+        "- Call run_test before finish.",
+        "- Call finish only when the workspace is ready.",
+        "- If a tool fails, inspect the tool result and continue.",
+        "- Keep the final summary concise.",
+    ]
+    if workflow.standing_rules:
+        parts.append("Standing rules:")
+        for rule in workflow.standing_rules:
+            parts.append(f"- {rule}")
+    return "\n".join(parts) + "\n"
+
+
+def _pending_injection(workflow: Workflow, turn_index: int) -> str | None:
+    """Return mid-task injection text if one is scheduled after this turn, else None."""
+    for inj in workflow.mid_task_injections:
+        if inj.after_turn == turn_index:
+            return inj.text
+    return None
 
 
 def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, request_args: dict | None = None,
@@ -306,13 +319,14 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
 
             for attempt in range(MAX_MALFORMED_TOOL_RETRIES + 1):
                 turn_started = time.perf_counter()
+                sampler = workflow.sampler_config
                 response = client.chat.completions.create(
                     model=MODEL,
                     messages=messages,
                     tools=tool_definitions(workflow.active_tools),
                     tool_choice="auto",
-                    temperature=request_args.get("temperature", 0.2),
-                    top_p=request_args.get("top_p", 0.9),
+                    temperature=request_args.get("temperature", sampler.get("temperature", 0.2)),
+                    top_p=request_args.get("top_p", sampler.get("top_p", 0.9)),
                     max_tokens=request_args.get("max_tokens", 512),
                 )
                 latency_ms = round((time.perf_counter() - turn_started) * 1000, 1)
@@ -367,20 +381,29 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                 )
 
                 if not tool_calls:
-                    _append_trace(
-                        trace,
-                        "repair_prompt",
-                        turn=turn_index,
-                        reason="assistant responded without finish tool",
-                    )
-                    malformed_finish_events += 1
-                    messages.append({"role": "assistant", "content": assistant_text or ""})
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": "Previous response did not call an allowed tool or finish. Use the allowed tools and end with finish when ready.",
-                        }
-                    )
+                    if workflow.supports_plaintext_turns:
+                        _append_trace(
+                            trace,
+                            "plaintext_turn",
+                            turn=turn_index,
+                            content=assistant_text,
+                        )
+                        messages.append({"role": "assistant", "content": assistant_text or ""})
+                    else:
+                        _append_trace(
+                            trace,
+                            "repair_prompt",
+                            turn=turn_index,
+                            reason="assistant responded without finish tool",
+                        )
+                        malformed_finish_events += 1
+                        messages.append({"role": "assistant", "content": assistant_text or ""})
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": "Previous response did not call an allowed tool or finish. Use the allowed tools and end with finish when ready.",
+                            }
+                        )
                     tool_calls = []
                     break
 
@@ -456,6 +479,11 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                 break
 
             if not tool_calls:
+                # check for mid-task injection even on plaintext turns
+                injection_text = _pending_injection(workflow, turn_index)
+                if injection_text:
+                    messages.append({"role": "user", "content": injection_text})
+                    _append_trace(trace, "mid_task_injection", turn=turn_index, content=injection_text)
                 continue
 
             messages.append(
@@ -599,6 +627,12 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                         final_summary=final_summary,
                     )
 
+            # mid-task injection after tool results are processed
+            injection_text = _pending_injection(workflow, turn_index)
+            if injection_text:
+                messages.append({"role": "user", "content": injection_text})
+                _append_trace(trace, "mid_task_injection", turn=turn_index, content=injection_text)
+
         else:
             status = "max_turns"
             failure_reason = "max_turns"
@@ -702,6 +736,9 @@ def _build_episode_result(episode_id: str, workflow: Workflow, session_mode: str
     episode = {
         "episode_id": episode_id,
         "workflow_id": workflow.workflow_id,
+        "benchmark_layer": workflow.benchmark_layer,
+        "profile_id": workflow.profile_id,
+        "scoring_method": workflow.scoring_method,
         "mode": session_mode,
         "status": status,
         "failure_reason": failure_reason,
@@ -835,7 +872,18 @@ def build_agentic_run_summary(workflow: Workflow, episode: dict, model_name: str
             "title": workflow.title,
             "slice": workflow.slice,
             "difficulty": workflow.difficulty,
+            "benchmark_layer": workflow.benchmark_layer,
+            "profile_id": workflow.profile_id,
+            "workflow_variant_of": workflow.workflow_variant_of,
+            "scoring_method": workflow.scoring_method,
+            "run_count": workflow.run_count,
+            "supports_plaintext_turns": workflow.supports_plaintext_turns,
+            "injection_count": len(workflow.mid_task_injections),
+            "reporting_tags": workflow.reporting_tags,
+            "prompt_weight_variant": workflow.prompt_weight_variant,
+            "tool_denial_expectation": workflow.tool_denial_expectation,
         },
+        "sampler_config": workflow.sampler_config,
     }
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / f"{run_id}.json"

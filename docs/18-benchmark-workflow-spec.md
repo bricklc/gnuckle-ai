@@ -44,7 +44,8 @@ gnuckle benchmark system
 |   |---- CB-8  resource_viability
 |   |---- CB-9  implicit_convention_adherence
 |   |---- CB-10 tool_denial_detection
-|   `---- CB-11 prompt_weight_tolerance
+|   |---- CB-11 prompt_weight_tolerance
+|   `---- CB-12 chained_plan_and_execute
 |
 |---- Profiles (user selects one or more)
 |   |---- life-mgmt        <- defined in this document
@@ -79,7 +80,7 @@ gnuckle benchmark system
 composite = (core_score x 0.4) + (avg_profile_scores x 0.6)
 ```
 
-Core score is the unweighted average of scored Core workflows CB-1 through CB-11, excluding CB-8.
+Core score is the unweighted average of scored Core workflows CB-1 through CB-12, excluding CB-8.
 
 Profile score is the unweighted average of all workflows in the selected profile(s).
 
@@ -519,6 +520,71 @@ The highest-weight variant must structurally resemble a realistic assistant prom
 - `hermes_viability`
 
 `hermes_viability` is true when the heaviest Hermes-like variant remains operational above the configured viability threshold.
+
+---
+
+### CB-12 -- Chained Plan-and-Execute
+
+**Purpose:** Can the model form a plan from a single prompt and execute a multi-step chain to a deterministic result, without credit for a plausible summary unless the full chain was actually completed?
+
+This sits between single-tool tests (CB-1, CB-2) and full profile workflows. It tests whether the model can act like an agent when the task has internal structure: multiple required inputs, standing constraints, a synthesized output artifact, and a definite finish condition.
+
+**Tools:** `list_files`, `read_file`, `write_file`, `finish`
+
+**Workspace:**
+
+```
+workspace/
+|---- brief.txt          <- project or task context (generic, not domain-locked)
+|---- inputs.txt         <- itemized input data (tasks, items, or entries)
+|---- schedule.txt       <- time-slotted availability or sequencing info
+|---- constraints.txt    <- standing rules that must survive into the output
+```
+
+Each file is pre-authored with 150-300 tokens. Content is generic workspace planning — not personal productivity, not code. Example: organizing a set of deliverables into a sequenced output given constraints.
+
+**System prompt:** "You are Gnuckle, a careful local agent. Use the available tools to complete the task. Inspect the workspace before acting. Do not finish until the output artifact exists and satisfies all stated constraints."
+
+**Task prompt:**
+> "Create an execution plan. Use the brief, inputs, schedule, and constraints. Prioritize items tagged urgent, respect all ordering rules in constraints.txt, and save the final result to plan.md."
+
+**Standing rules (stated in the task prompt, must survive into output):**
+1. Items tagged urgent go first.
+2. No item may be scheduled into a blocked slot from schedule.txt.
+3. The output must reference every item from inputs.txt — none may be silently dropped.
+
+**Expected trace pattern:**
+
+`list_files` -> `read_file` x 4 (brief, inputs, schedule, constraints) -> `write_file("plan.md", ...)` -> `finish`
+
+The model may read files in any order and may re-read files. The critical requirement is that all four source files are read before `write_file` is called.
+
+**Scoring:**
+
+| Criterion | Weight | Scoring |
+|---|---|---|
+| Discovery | 0.15 | 1.0 if all four source files were read before writing; 0.5 if at least two were read; 0.0 if wrote without reading |
+| Sequence correctness | 0.20 | 1.0 if reads preceded write and write preceded finish; 0.5 if one step was out of order; 0.0 if jumped straight to output |
+| Constraint retention | 0.25 | proportion of standing rules obeyed in the output artifact (3 rules, score is 0.00, 0.33, 0.67, or 1.00) |
+| Artifact correctness | 0.30 | 1.0 if plan.md exists, references all input items, respects ordering, and contains no hallucinated items; 0.5 if partially correct; 0.0 if missing or fundamentally wrong |
+| Finish discipline | 0.10 | 1.0 if finish was called only after plan.md was created correctly; 0.5 if finish was called but plan.md is incomplete; 0.0 if finish was called before write or never called |
+
+**Ground truth:** `_ground_truth.json` specifies:
+- the required set of items that must appear in `plan.md`
+- the required ordering constraints
+- the set of blocked slots that must not contain items
+- the standing rules that must be reflected
+
+**Extensions (run as diagnostic variants, not default):**
+
+| Variant | ID | Mechanism |
+|---|---|---|
+| Mid-chain injection | CB-12-inject | After initial reads, inject: "Also mark item X as urgent." Tests whether the chain can update without breaking. |
+| Step failure | CB-12-fail | One source file contains contradictory data. Tests adaptation — the model must note the conflict rather than silently choosing. |
+| Delayed obligation | CB-12-delayed | System prompt includes: "End every final output with a one-line risk note." Tests long-horizon instruction retention across the full chain. |
+| Verification requirement | CB-12-verify | Standing rule: "After writing the plan, re-read it and confirm it satisfies all constraints before finishing." Tests self-verification discipline. |
+
+Variants are scored using the same criteria table. The variant mechanism adds a secondary pass/fail signal for the specific extension behavior.
 
 ---
 
@@ -987,7 +1053,7 @@ Each future profile follows the same structure: 5-7 workflows, deterministic gro
 
 Build order:
 
-1. Core battery (CB-1 through CB-11)
+1. Core battery (CB-1 through CB-12)
 2. life-mgmt profile (WF-A through WF-G)
 3. Harness update: support plain-text assistant turns (required for WF-E)
 4. Harness update: support mid-task user injection (required for WF-C)
@@ -1074,7 +1140,7 @@ That is actionable information. That is the point.
 This document specifies:
 
 - The three-layer architecture (Core, Profiles, Tier)
-- The full Core battery (CB-1 through CB-11, including tool denial detection and prompt weight tolerance)
+- The full Core battery (CB-1 through CB-12, including tool denial detection, prompt weight tolerance, and chained plan-and-execute)
 - The full life-mgmt profile (WF-A through WF-G, including Taglish and decay variants)
 - The explicit vs implicit instruction axis as a benchmark-wide testing dimension
 - The prompt-weight axis as a benchmark-wide testing dimension

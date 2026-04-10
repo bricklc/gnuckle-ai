@@ -604,6 +604,23 @@ def load_agentic_result(results_dir: Path):
     return None
 
 
+def load_agentic_results(results_dir: Path) -> dict[str, dict]:
+    """Load all agentic JSONs, keeping the latest per cache label."""
+    files = sorted(results_dir.glob("agentic_*.json"), reverse=True)
+    by_cache = {}
+    for file_path in files:
+        try:
+            data = json.loads(file_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if data.get("benchmark_mode") != "agentic":
+            continue
+        label = data.get("cache_label", "unknown")
+        if label not in by_cache:
+            by_cache[label] = data
+    return by_cache
+
+
 def detect_benchmark_mode(results_dir: Path) -> str | None:
     if any(results_dir.glob("agentic_*.json")):
         return "agentic"
@@ -1284,6 +1301,246 @@ def build_agentic_html(data):
     )
 
 
+def _extract_agentic_metrics(data: dict) -> dict:
+    """Pull comparable metrics from an agentic run summary."""
+    episode = (data.get("episodes") or [{}])[0]
+    perf = episode.get("performance", {})
+    scores = episode.get("scores", {})
+    hw = episode.get("hardware_usage", {})
+    token_usage = episode.get("token_usage", {})
+    aggregate = data.get("aggregate", {})
+    return {
+        "wall_clock_s": round(perf.get("wall_clock_ms", 0) / 1000, 2),
+        "avg_turn_latency_ms": round(perf.get("avg_turn_latency_ms", 0), 1),
+        "vram_peak_mb": int(hw.get("vram_peak_mb", aggregate.get("vram_peak_mb", 0)) or 0),
+        "vram_steady_mb": int(hw.get("vram_steady_mb", aggregate.get("vram_steady_mb", 0)) or 0),
+        "episode_score": round(scores.get("episode_score", 0), 3),
+        "task_completed": bool(episode.get("task_completed")),
+        "verification_passed": bool(episode.get("verification_passed")),
+        "turns_used": int(episode.get("turns_used", 0)),
+        "tool_calls_used": int(episode.get("tool_calls_used", 0)),
+        "peak_context_tokens": int(
+            token_usage.get("context_tokens_measured")
+            or token_usage.get("context_tokens_heuristic")
+            or aggregate.get("peak_context_tokens_heuristic", 0)
+            or 0
+        ),
+        "context_percent_used": token_usage.get("context_percent_used"),
+        "provider_total_tokens": int(
+            episode.get("provider_usage_total_tokens")
+            or (episode.get("provider_usage") or {}).get("total_tokens", 0)
+            or 0
+        ),
+        "cache_label": data.get("cache_label", "unknown"),
+    }
+
+
+AGENTIC_COMPARISON_TEMPLATE = Template(
+    """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>agentic KV cache comparison - $model_name</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-sans); }
+.dash { padding: 1rem 0; }
+.header { margin-bottom: 1rem; }
+.header h1 { font-size: 18px; font-weight: 600; color: var(--color-text-primary); }
+.header .sub { font-size: 11px; color: var(--color-text-secondary); margin-top: 4px; }
+.section-label { font-size: 11px; font-weight: 500; color: var(--color-text-tertiary); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
+.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1rem; }
+.chart-wrap { background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 0.75rem 1rem; }
+.chart-title { font-size: 12px; font-weight: 500; color: var(--color-text-primary); margin-bottom: 2px; }
+.chart-sub { font-size: 10px; color: var(--color-text-secondary); margin-bottom: 6px; }
+table { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 1rem; }
+th { text-align: left; font-weight: 500; color: var(--color-text-secondary); padding: 6px 8px; border-bottom: 1px solid var(--color-border-primary); }
+td { padding: 6px 8px; color: var(--color-text-primary); border-bottom: 1px solid var(--color-border-secondary, rgba(128,128,128,0.1)); }
+tr.best td { font-weight: 600; }
+.footer { margin-top: 1rem; font-size: 10px; color: var(--color-text-tertiary); text-align: center; }
+</style>
+</head>
+<body>
+<div class="dash">
+  <div class="header">
+    <h1>agentic KV cache comparison</h1>
+    <div class="sub">$model_name · $workflow_title · $cache_count cache types · $timestamp</div>
+  </div>
+
+  <div class="section-label">summary table</div>
+  <table>
+    <thead>
+      <tr>
+        <th>cache</th>
+        <th>score</th>
+        <th>completed</th>
+        <th>verified</th>
+        <th>turns</th>
+        <th>tools</th>
+        <th>wall (s)</th>
+        <th>avg latency (ms)</th>
+        <th>VRAM peak (MB)</th>
+        <th>peak context</th>
+        <th>provider tokens</th>
+      </tr>
+    </thead>
+    <tbody>
+$table_rows
+    </tbody>
+  </table>
+
+  <div class="chart-grid">
+    <div class="chart-wrap">
+      <div class="chart-title">episode score by cache type</div>
+      <div class="chart-sub">higher is better</div>
+      <div style="position: relative; width: 100%; height: 220px;">
+        <canvas id="scoreChart"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <div class="chart-title">wall clock time (seconds)</div>
+      <div class="chart-sub">lower is better</div>
+      <div style="position: relative; width: 100%; height: 220px;">
+        <canvas id="wallChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="chart-grid">
+    <div class="chart-wrap">
+      <div class="chart-title">average turn latency (ms)</div>
+      <div class="chart-sub">lower is better</div>
+      <div style="position: relative; width: 100%; height: 220px;">
+        <canvas id="latencyChart"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <div class="chart-title">VRAM peak (MB)</div>
+      <div class="chart-sub">lower means more headroom</div>
+      <div style="position: relative; width: 100%; height: 220px;">
+        <canvas id="vramCompChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="chart-grid">
+    <div class="chart-wrap">
+      <div class="chart-title">peak context tokens</div>
+      <div class="chart-sub">token pressure at deepest point in the trace</div>
+      <div style="position: relative; width: 100%; height: 220px;">
+        <canvas id="contextCompChart"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <div class="chart-title">provider tokens consumed</div>
+      <div class="chart-sub">total input + output tokens reported by the server</div>
+      <div style="position: relative; width: 100%; height: 220px;">
+        <canvas id="providerChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">generated by gnuckle $version</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const gridColor = 'rgba(128,128,128,0.12)';
+const tickColor = '#888780';
+const tickFont = { size: 10 };
+const labels = $cache_labels;
+const colors = $cache_colors;
+const barOpts = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { display: false } },
+  scales: {
+    x: { ticks: { color: tickColor, font: tickFont }, grid: { display: false } },
+    y: { ticks: { color: tickColor, font: tickFont }, grid: { color: gridColor } }
+  }
+};
+function makeBar(id, data) {
+  new Chart(document.getElementById(id), {
+    type: 'bar',
+    data: { labels: labels, datasets: [{ data: data, backgroundColor: colors }] },
+    options: barOpts
+  });
+}
+makeBar('scoreChart', $score_values);
+makeBar('wallChart', $wall_values);
+makeBar('latencyChart', $latency_values);
+makeBar('vramCompChart', $vram_comp_values);
+makeBar('contextCompChart', $context_comp_values);
+makeBar('providerChart', $provider_values);
+</script>
+</body>
+</html>
+"""
+)
+
+
+def build_agentic_comparison_html(by_cache: dict[str, dict]) -> str:
+    """Build comparison HTML across multiple agentic cache-type runs."""
+    ordered = [c for c in CACHE_ORDER if c in by_cache]
+    ordered.extend(sorted(c for c in by_cache if c not in ordered))
+    metrics = {cache: _extract_agentic_metrics(by_cache[cache]) for cache in ordered}
+
+    first = by_cache[ordered[0]]
+    model_name = first.get("model_id", "unknown model")
+    workflow = first.get("workflow", {})
+    workflow_title = workflow.get("title", workflow.get("workflow_id", "unknown workflow"))
+    generated_at = first.get("generated_at", datetime.now().isoformat())
+    try:
+        timestamp = datetime.fromisoformat(generated_at).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        timestamp = generated_at
+
+    best_score = max(m["episode_score"] for m in metrics.values())
+    table_rows = []
+    for cache in ordered:
+        m = metrics[cache]
+        is_best = m["episode_score"] == best_score
+        row_class = ' class="best"' if is_best else ""
+        table_rows.append(
+            f"      <tr{row_class}>"
+            f"<td>{escape(cache)}</td>"
+            f"<td>{format_num(m['episode_score'], 3)}</td>"
+            f"<td>{'yes' if m['task_completed'] else 'no'}</td>"
+            f"<td>{'yes' if m['verification_passed'] else 'no'}</td>"
+            f"<td>{m['turns_used']}</td>"
+            f"<td>{m['tool_calls_used']}</td>"
+            f"<td>{format_num(m['wall_clock_s'], 2)}</td>"
+            f"<td>{format_num(m['avg_turn_latency_ms'], 1)}</td>"
+            f"<td>{m['vram_peak_mb']}</td>"
+            f"<td>{m['peak_context_tokens']}</td>"
+            f"<td>{m['provider_total_tokens']}</td>"
+            f"</tr>"
+        )
+
+    cache_colors = [CACHE_COLORS.get(c, "#888780") for c in ordered]
+    version = _get_version()
+
+    return AGENTIC_COMPARISON_TEMPLATE.safe_substitute(
+        model_name=escape(model_name),
+        workflow_title=escape(str(workflow_title)),
+        cache_count=str(len(ordered)),
+        timestamp=escape(timestamp),
+        table_rows="\n".join(table_rows),
+        cache_labels=json.dumps(ordered),
+        cache_colors=json.dumps(cache_colors),
+        score_values=json.dumps([metrics[c]["episode_score"] for c in ordered]),
+        wall_values=json.dumps([metrics[c]["wall_clock_s"] for c in ordered]),
+        latency_values=json.dumps([metrics[c]["avg_turn_latency_ms"] for c in ordered]),
+        vram_comp_values=json.dumps([metrics[c]["vram_peak_mb"] for c in ordered]),
+        context_comp_values=json.dumps([metrics[c]["peak_context_tokens"] for c in ordered]),
+        provider_values=json.dumps([metrics[c]["provider_total_tokens"] for c in ordered]),
+        version=escape(version),
+    )
+
+
 def _get_version():
     try:
         from gnuckle import __version__
@@ -1314,16 +1571,28 @@ def run_visualize(results_dir: str):
     ape_print("loading")
     benchmark_mode = detect_benchmark_mode(results_path)
     if benchmark_mode == "agentic":
-        data = load_agentic_result(results_path)
-        if not data:
+        agentic_by_cache = load_agentic_results(results_path)
+        if not agentic_by_cache:
             print(f"  no agentic benchmark JSONs in: {results_path}")
             print("  folder empty. ape no draw nothing. run benchmark first.")
             sys.exit(1)
         print("  mode: agentic")
-        print(f"  model: {data.get('model_id', 'unknown model')}")
+        print(f"  found {len(agentic_by_cache)} cache type(s): {', '.join(agentic_by_cache.keys())}")
+        first_data = next(iter(agentic_by_cache.values()))
+        print(f"  model: {first_data.get('model_id', 'unknown model')}")
         ape_print("loading")
-        html = build_agentic_html(data)
+
+        # Always produce the single-run dashboard for the most recent run
+        html = build_agentic_html(first_data)
         out_file = results_path / "agentic_benchmark_dashboard.html"
+
+        # If multiple cache types exist, also produce the comparison view
+        if len(agentic_by_cache) > 1:
+            comparison_html = build_agentic_comparison_html(agentic_by_cache)
+            comparison_file = results_path / "agentic_comparison_dashboard.html"
+            comparison_file.write_text(comparison_html, encoding="utf-8")
+            print(f"\n  comparison saved: {comparison_file}")
+            print(f"  {len(agentic_by_cache)} cache types compared. ape see the difference now. yes.")
     else:
         by_cache = load_results(results_path)
 

@@ -1,8 +1,17 @@
 {
+  "default_sampler_config": {
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "top_k": 20,
+    "repeat_penalty": 1.1
+  },
   "suites": {
     "default": [
       "coding_fix_001"
-    ]
+    ],
+    "core": [],
+    "diagnostic": [],
+    "life-mgmt": []
   },
   "workflows": [
     {
@@ -10,14 +19,21 @@
       "title": "Fix a failing greeting assertion",
       "slice": "coding",
       "difficulty": "easy",
+      "benchmark_layer": "profile",
+      "profile_id": "dev-tooling",
+      "workflow_variant_of": null,
       "system_prompt": "You are Gnuckle, a careful local coding agent. Use tools, inspect the workspace, fix the failing test, run verification, then call finish. Do not claim success before tests pass.",
       "fixture": "fix_greeting",
+      "workspace_fixture": null,
+      "ground_truth_path": null,
+      "context_noise_fixture": null,
       "event": {
         "event_type": "interactive_request",
         "payload": {
           "text": "A small Python workspace has one failing test. Read the files, fix the bug, run the test, and then finish with a short summary."
         }
       },
+      "standing_rules": [],
       "allowed_tools": [
         "read_file",
         "edit_file",
@@ -37,8 +53,18 @@
         "run_test",
         "finish"
       ],
+      "expected_trace_pattern": [
+        "read_file",
+        "edit_file",
+        "run_test",
+        "finish"
+      ],
       "max_turns": 8,
       "timeout_s": 180,
+      "run_count": 1,
+      "supports_plaintext_turns": false,
+      "mid_task_injections": [],
+      "sampler_config": {},
       "verification": {
         "required": true,
         "method": "run_test",
@@ -51,7 +77,12 @@
       },
       "success_rule": {
         "type": "test_pass"
-      }
+      },
+      "scoring_method": "test_pass",
+      "scoring_criteria": [],
+      "reporting_tags": [],
+      "prompt_weight_variant": null,
+      "tool_denial_expectation": null
     }
   ]
 }

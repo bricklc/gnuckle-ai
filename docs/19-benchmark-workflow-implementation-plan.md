@@ -54,12 +54,13 @@ If scope changes materially, the change should happen in a new numbered doc inst
 
 The checked-in `docs/18-benchmark-workflow-spec.md` currently stops at `CB-9`.
 
-This implementation plan also reserves `CB-10` and `CB-11` based on the approved post-`19` review delta:
+This implementation plan also reserves `CB-10`, `CB-11`, and `CB-12` based on the approved post-`19` review delta:
 
 - `CB-10` Tool Denial Detection
 - `CB-11` Prompt Weight Tolerance
+- `CB-12` Chained Plan-and-Execute
 
-Until `18` is updated in-repo, treat those two Core items as implementation-plan requirements that must be synced back into the normative spec.
+Until `18` is updated in-repo, treat those three Core items as implementation-plan requirements that must be synced back into the normative spec.
 
 ---
 
@@ -67,7 +68,7 @@ Until `18` is updated in-repo, treat those two Core items as implementation-plan
 
 The `18` implementation is complete only when all of the following are true:
 
-1. the Core battery `CB-1` through `CB-11` runs end-to-end from the CLI
+1. the Core battery `CB-1` through `CB-12` runs end-to-end from the CLI
 2. the `life-mgmt` profile `WF-A` through `WF-G` runs end-to-end from the CLI
 3. `WF-C-tl`, `WF-G-explicit`, and `WF-G-decay` run as diagnostics with separate reporting
 4. the harness supports plain-text assistant turns without forcing a tool call
@@ -321,6 +322,7 @@ Ground truth must exist for every workflow where deterministic scoring depends o
 - `CB-9`
 - `CB-10`
 - `CB-11`
+- `CB-12`
 - `WF-A`
 - `WF-B`
 - `WF-C`
@@ -487,7 +489,7 @@ Every benchmark run summary must preserve:
 
 ### Goal
 
-Implement `CB-1` through `CB-11` as the universal benchmark layer.
+Implement `CB-1` through `CB-12` as the universal benchmark layer.
 
 ### Scope
 
@@ -556,9 +558,16 @@ They must produce:
 - reports `prompt_weight_tolerance`
 - reports a derived `hermes_viability` signal from the heaviest prompt-weight variants
 
+#### CB-12 Chained Plan-and-Execute
+
+- scores discovery, sequence correctness, constraint retention, artifact correctness, and finish discipline separately
+- requires all source files read before write
+- validates output artifact against `_ground_truth.json` for item coverage, ordering, and constraint compliance
+- diagnostic variants (`CB-12-inject`, `CB-12-fail`, `CB-12-delayed`, `CB-12-verify`) run separately with variant-specific pass/fail signals
+
 ### Checklist
 
-- [ ] Implement scoring logic for `CB-1` through `CB-11`
+- [ ] Implement scoring logic for `CB-1` through `CB-12`
 - [ ] Ensure Core workflows can run both singly and as a battery
 - [ ] Add fixed filler/noise files for `CB-5`, `CB-6`, and `CB-7`
 - [ ] Add fixed denial scenarios for `CB-10`
@@ -568,7 +577,10 @@ They must produce:
 - [ ] Add convention discovery scoring for `CB-9`
 - [ ] Add denial-threshold scoring for `CB-10`
 - [ ] Add prompt-weight tolerance scoring for `CB-11`
-- [ ] Ensure Core score is the unweighted average of scored Core workflows `CB-1` through `CB-11`, excluding `CB-8`
+- [ ] Add `CB-12` workspace fixtures (`brief.txt`, `inputs.txt`, `schedule.txt`, `constraints.txt`) and `_ground_truth.json`
+- [ ] Add `CB-12` scoring logic for discovery, sequence, constraint retention, artifact correctness, and finish discipline
+- [ ] Add `CB-12` diagnostic variants (`CB-12-inject`, `CB-12-fail`, `CB-12-delayed`, `CB-12-verify`) as separate runnable workflows
+- [ ] Ensure Core score is the unweighted average of scored Core workflows `CB-1` through `CB-12`, excluding `CB-8`
 - [ ] Verify Core outputs are stable across repeated runs with the same model/settings
 - [ ] Run each Core workflow at least `3` times and report mean plus standard deviation
 - [ ] Record hallucination count and step-efficiency ratio in Core outputs where applicable
@@ -1125,6 +1137,12 @@ Use them as implementation references when the corresponding `gnuckle` surface i
 - `/G:/2026%20Projects/openclaude/src/services/compact/autoCompact.ts:33`
 - `/G:/2026%20Projects/openclaude/src/services/compact/autoCompact.ts:225`
 
+#### CB-12 chained_plan_and_execute
+
+- `/G:/2026%20Projects/openclaude/src/QueryEngine.ts:184` (multi-turn state threading)
+- `/G:/2026%20Projects/openclaude/src/QueryEngine.ts:757` (turn sequencing)
+- `/G:/2026%20Projects/openclaude/src/services/tools/toolOrchestration.ts:91` (tool selection chain)
+
 ### Phase 8 - Life-Mgmt Profile
 
 #### WF-C late user injection remains coherent
@@ -1294,7 +1312,7 @@ Do not call the `18` implementation complete until all of the following are true
 1. the diagnostic suite runs and assigns a Type
 2. the Core battery runs and produces a Core score
 3. the `life-mgmt` profile runs and produces a weighted profile score
-4. `CB-10` and `CB-11` produce tool-denial and prompt-weight outputs
+4. `CB-10`, `CB-11`, and `CB-12` produce tool-denial, prompt-weight, and chained-execution outputs
 5. `WF-G-explicit` and `WF-G-decay` produce diagnostic metrics outside the profile composite
 6. `WF-C` proves mid-task injection works
 7. `WF-E` proves plain-text assistant turns work
