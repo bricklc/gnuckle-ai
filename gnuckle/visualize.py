@@ -390,6 +390,16 @@ $resource_cards
 
   <div class="chart-grid">
     <div class="chart-wrap">
+      <div class="chart-title">VRAM usage across the trace</div>
+      <div class="chart-sub">peak VRAM (MB) at each assistant and tool step</div>
+      <div style="position: relative; width: 100%; height: 220px;">
+        <canvas id="vramTraceChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="chart-grid">
+    <div class="chart-wrap">
       <div class="chart-title">score breakdown</div>
       <div class="chart-sub">raw score parts kept visible for benchmark honesty</div>
       <div class="table-wrap">
@@ -484,6 +494,32 @@ new Chart(document.getElementById('failureChart'), {
     plugins: { legend: { display: false } },
     scales: {
       x: { ticks: { color: tickColor, font: tickFont }, grid: { display: false } },
+      y: { ticks: { color: tickColor, font: tickFont }, grid: { color: gridColor } }
+    }
+  }
+});
+
+new Chart(document.getElementById('vramTraceChart'), {
+  type: 'line',
+  data: {
+    labels: $vram_labels,
+    datasets: [{
+      label: 'VRAM peak (MB)',
+      data: $vram_values,
+      borderColor: '#6A4C93',
+      backgroundColor: 'transparent',
+      borderWidth: 2,
+      pointRadius: 2,
+      tension: 0.3,
+      spanGaps: true
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: true } },
+    scales: {
+      x: { ticks: { color: tickColor, font: tickFont }, grid: { color: gridColor } },
       y: { ticks: { color: tickColor, font: tickFont }, grid: { color: gridColor } }
     }
   }
@@ -1191,6 +1227,19 @@ def build_agentic_html(data):
         context_tokenizer_values = [None]
         context_measured_values = [None]
 
+    vram_labels = []
+    vram_values = []
+    for idx, entry in enumerate(trace, start=1):
+        hardware = entry.get("hardware_usage") or {}
+        vram_peak = hardware.get("vram_peak_mb")
+        if vram_peak is None:
+            continue
+        vram_labels.append(f"{entry.get('type', 'step')} {idx}")
+        vram_values.append(int(vram_peak))
+    if not vram_labels:
+        vram_labels = ["no-data"]
+        vram_values = [0]
+
     failure_labels = json.dumps(
         ["invalid", "retries", "exec fail", "denials", "synthetic", "bad finish", "repeat bad", "false done"]
     )
@@ -1229,6 +1278,8 @@ def build_agentic_html(data):
         context_measured_label=escape(measured_label_text),
         failure_labels=failure_labels,
         failure_values=failure_values,
+        vram_labels=json.dumps(vram_labels),
+        vram_values=json.dumps(vram_values),
         version=escape(version),
     )
 
