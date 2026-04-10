@@ -1,5 +1,0 @@
-openai>=1.0.0
-tiktoken>=0.9.0
-
-[completion]
-argcomplete>=3.5.0
