@@ -1,0 +1,27 @@
+{
+  "workflow_id": "wf_g_decay_format",
+  "required_format": {
+    "date_header": "## YYYY-MM-DD",
+    "mood_tag": "[mood: X]",
+    "body_style": "bullet-list"
+  },
+  "content_must_include": [
+    "Skipped gym",
+    "reviewed thermodynamics chapter 3",
+    "feeling tired but productive"
+  ],
+  "noise_sequence": [
+    "errands.txt",
+    "goals.txt",
+    "health_log.txt",
+    "note_monday.txt",
+    "note_tuesday.txt",
+    "note_wednesday.txt",
+    "note_thursday.txt",
+    "note_friday.txt",
+    "shopping_list.txt",
+    "project_notes.txt",
+    "reminders.txt",
+    "contacts.txt"
+  ]
+}

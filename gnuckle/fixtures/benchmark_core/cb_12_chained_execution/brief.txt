@@ -1,0 +1,3 @@
+Project Atlas has four deliverables that must be sequenced into a one-day execution plan.
+The plan should prioritize urgent items, avoid blocked schedule windows, and cover every deliverable exactly once.
+Stakeholders expect a simple markdown artifact that another operator could follow without extra context.

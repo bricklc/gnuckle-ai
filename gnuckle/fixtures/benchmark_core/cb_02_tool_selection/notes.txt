@@ -1,0 +1,15 @@
+Project Status Update — Weekly Sync
+Date: April 7, 2026
+Attendees: Dana (PM), Reuben (Backend), Lena (Frontend), Kwame (QA)
+
+The API migration to v2 endpoints is on track. Reuben confirmed that the user service and billing service endpoints are complete and deployed to staging. The inventory service is still pending — estimated completion by end of week.
+
+Lena reported that the dashboard UI is consuming v2 user and billing endpoints without issue. The inventory dashboard widget is blocked pending the backend endpoint. No regressions were found in smoke testing on Chrome and Firefox.
+
+Kwame completed regression coverage for the user and billing flows. Inventory test cases are drafted and ready to execute once the endpoint is live.
+
+Dana noted the April 14 release window is still firm. The team agreed that if the inventory endpoint slips past Wednesday, the release scope will be narrowed to exclude the inventory dashboard widget rather than delay the full release.
+
+No blockers were raised outside the inventory dependency. Next sync is scheduled for April 10.
+
+Action items deferred to async tracking — no decisions pending team input.

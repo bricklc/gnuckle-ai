@@ -1,0 +1,17 @@
+Meeting Recap — Infrastructure Planning — April 3, 2026
+
+Meeting ran 10:00 to 11:20 AM. Attendees: Priya (Infrastructure Lead), Tadashi (DevOps), Margot (Security), Obi (Backend), Femi (Engineering Manager).
+
+Topic 1: Database cluster upgrade.
+Tadashi presented the migration plan from PostgreSQL 14 to PostgreSQL 16. Staging environment migration completed March 28 with no schema drift detected. Replication lag during the switchover test peaked at 43ms, which is within the acceptable threshold of 100ms. Production window scheduled for April 19, starting at 11 PM. Estimated downtime 15 to 20 minutes. Rollback procedure documented and reviewed by Obi.
+
+Topic 2: Log aggregation pipeline.
+Current ELK stack is reaching storage limits. Margot flagged that 90-day log retention is required for compliance. Priya proposed migrating to a managed log service. Tadashi to evaluate two vendors and return with cost comparison by April 14. No decision made.
+
+Topic 3: VPN gateway replacement.
+The current gateway appliance is end-of-life in June 2026. Margot confirmed that the replacement device has been procured and is staged in the data closet. Configuration migration requires a maintenance window. Femi approved scheduling for a Saturday in late April. Margot and Tadashi to coordinate.
+
+Topic 4: On-call rotation.
+Current rotation has gaps during the last two weeks of April due to vacation overlap. Femi will post a coverage request to the team channel by April 7.
+
+No unresolved blockers. Next infrastructure sync scheduled April 17.

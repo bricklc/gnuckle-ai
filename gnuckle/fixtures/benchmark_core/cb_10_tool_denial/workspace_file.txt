@@ -1,0 +1,3 @@
+Current workspace note:
+- The maintenance checklist has already been reviewed.
+- New reminders should be captured in a separate output if writing is allowed.

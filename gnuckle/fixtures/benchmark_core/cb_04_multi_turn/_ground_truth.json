@@ -1,0 +1,12 @@
+{
+  "workflow_id": "cb_04_multi_turn",
+  "expected_final_list": [
+    "2 liters of fresh milk"
+  ],
+  "forbidden_items": [
+    "milk",
+    "fresh milk",
+    "2 liters milk"
+  ],
+  "notes": "Final list should contain exactly one updated item with no duplicates."
+}

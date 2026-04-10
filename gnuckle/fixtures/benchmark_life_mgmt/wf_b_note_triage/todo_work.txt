@@ -1,0 +1,3 @@
+- send Friday demo recap
+- fix analytics tag on CTA
+- book time with finance for budget review

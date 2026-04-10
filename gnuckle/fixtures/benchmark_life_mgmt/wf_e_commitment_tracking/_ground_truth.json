@@ -1,0 +1,8 @@
+{
+  "workflow_id": "wf_e_commitment_tracking",
+  "expected_commitments": [
+    "Call sister on Thursday",
+    "Do not forget the dentist appointment",
+    "Reply to Marcus about the trip"
+  ]
+}

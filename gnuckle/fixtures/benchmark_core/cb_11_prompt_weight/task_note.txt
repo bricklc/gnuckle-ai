@@ -1,0 +1,4 @@
+Read this note and create summary.md with three bullets:
+- Server patch window starts at 19:00.
+- Only the auth node requires a restart.
+- Post-patch verification must include login and billing smoke tests.

@@ -1,0 +1,1 @@
+Possible side project: a tiny daily planning app that combines journal signals with recurring commitments. Main risk is overbuilding the interface before the command model is solid.

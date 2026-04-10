@@ -1,0 +1,26 @@
+{
+  "workflow_id": "cb_05_constitutional",
+  "standing_rules": [
+    "Always respond in bullet points.",
+    "Never suggest activities after 8pm.",
+    "Health-related items go first in any list."
+  ],
+  "expected_read_sequence": [
+    "note_1.txt",
+    "note_2.txt",
+    "note_3.txt",
+    "note_4.txt",
+    "note_5.txt",
+    "note_6.txt",
+    "note_7.txt"
+  ],
+  "fixture_files": [
+    "note_1.txt",
+    "note_2.txt",
+    "note_3.txt",
+    "note_4.txt",
+    "note_5.txt",
+    "note_6.txt",
+    "note_7.txt"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "workflow_id": "wf_c_tl_taglish_agenda",
+  "shares_fixture_with": "wf_c_daily_agenda",
+  "carry_forward_items": [
+    "Review budget spreadsheet",
+    "Vendor follow-up email"
+  ],
+  "health_tasks": [
+    "stretch",
+    "rehab exercises"
+  ],
+  "injected_item": "Call my brother before noon",
+  "must_not_schedule_after": "20:00"
+}

@@ -1,0 +1,9 @@
+Sprint Planning Note
+
+Read this file and then prepare a concise summary named output.md.
+
+Required facts:
+- The mobile release is targeted for April 18.
+- Battery drain on Android remains the top blocker.
+- The team agreed to freeze non-critical UI polish until after launch.
+- QA needs a fresh build by Tuesday noon.

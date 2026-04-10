@@ -1,0 +1,7 @@
+Available schedule:
+- 09:00-10:00 open
+- 10:00-11:00 blocked: finance review
+- 11:00-12:00 open
+- 13:00-14:00 open
+- 14:00-15:00 blocked: all-hands
+- 15:00-17:00 open

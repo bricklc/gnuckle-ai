@@ -1,0 +1,5 @@
+Rules:
+1. Urgent items must appear before any non-urgent item.
+2. No task may be assigned to a blocked slot.
+3. Every item from inputs.txt must appear in plan.md.
+4. Use one markdown bullet per scheduled item.

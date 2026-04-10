@@ -430,6 +430,26 @@ def llamacpp_context_token_count(base_url: str | None, messages: list[dict], too
     return llamacpp_text_token_count(base_url, prompt)
 
 
+def preferred_tokenizer_count(text: str, base_url: str | None = None) -> tuple[int | None, str, int | None, str]:
+    measured = llamacpp_text_token_count(base_url, text)
+    if measured is not None:
+        return measured, llamacpp_tokenizer_label(), measured, llamacpp_tokenizer_label()
+    fallback = tokenizer_token_count(text)
+    return fallback, tokenizer_label(), measured, llamacpp_tokenizer_label()
+
+
+def preferred_context_token_count(messages, tools=None, base_url: str | None = None) -> tuple[int | None, str, int | None, str]:
+    measured = llamacpp_context_token_count(base_url, messages, tools)
+    if measured is not None:
+        return measured, llamacpp_tokenizer_label(), measured, llamacpp_tokenizer_label()
+    tokenizer_payload = {
+        "messages": messages,
+        "tools": tools or [],
+    }
+    fallback = tokenizer_token_count(json.dumps(tokenizer_payload, ensure_ascii=True))
+    return fallback, tokenizer_label(), measured, llamacpp_tokenizer_label()
+
+
 def estimate_context_token_counts(messages, tools=None, base_url: str | None = None):
     total_chars = 0
     for message in messages:
@@ -443,33 +463,48 @@ def estimate_context_token_counts(messages, tools=None, base_url: str | None = N
             total_chars += len(json.dumps(tool_calls, ensure_ascii=True))
     if tools:
         total_chars += len(json.dumps(tools, ensure_ascii=True))
-    tokenizer_payload = {
-        "messages": messages,
-        "tools": tools or [],
-    }
+    preferred_count, preferred_label, measured_count, measured_label = preferred_context_token_count(
+        messages,
+        tools=tools,
+        base_url=base_url,
+    )
     return {
         "heuristic": max(1, round(total_chars / 4)),
-        "tokenizer": tokenizer_token_count(json.dumps(tokenizer_payload, ensure_ascii=True)),
-        "tokenizer_label": tokenizer_label(),
-        "measured": llamacpp_context_token_count(base_url, messages, tools),
-        "measured_label": llamacpp_tokenizer_label(),
+        "tokenizer": preferred_count,
+        "tokenizer_label": preferred_label,
+        "measured": measured_count,
+        "measured_label": measured_label,
     }
 
 
 def prompt_token_counts(text: str, base_url: str | None = None) -> dict:
+    preferred_count, preferred_label, measured_count, measured_label = preferred_tokenizer_count(
+        text,
+        base_url=base_url,
+    )
     return {
         "heuristic": approx_token_count(text),
-        "tokenizer": tokenizer_token_count(text),
-        "tokenizer_label": tokenizer_label(),
-        "measured": llamacpp_text_token_count(base_url, text),
-        "measured_label": llamacpp_tokenizer_label(),
+        "tokenizer": preferred_count,
+        "tokenizer_label": preferred_label,
+        "measured": measured_count,
+        "measured_label": measured_label,
     }
 
 
 def token_counting_info(exact_available: bool = False) -> dict:
+    sample = tokenizer_token_count("banana")
+    secondary_method = (
+        f"{tokenizer_label()} approximation"
+        if sample is not None
+        else "tokenizer unavailable"
+    )
     info = {
         "status": "measured" if exact_available else "estimated",
-        "primary_method": "llama.cpp /apply-template + /tokenize" if exact_available else "char/4 heuristic",
+        "primary_method": (
+            "llama.cpp /apply-template + /tokenize"
+            if exact_available
+            else secondary_method
+        ),
         "measured": bool(exact_available),
         "warning": (
             "Context-pressure metrics are measured with llama.cpp server endpoints."
@@ -479,11 +514,7 @@ def token_counting_info(exact_available: bool = False) -> dict:
             "Treat CB-6, CB-7, CB-10, and CB-11 context claims as having roughly 15% uncertainty."
         ),
     }
-    sample = tokenizer_token_count("banana")
-    if sample is not None:
-        info["secondary_method"] = f"{tokenizer_label()} approximation"
-    else:
-        info["secondary_method"] = "tokenizer unavailable"
+    info["secondary_method"] = secondary_method if exact_available else "char/4 heuristic"
     info["tertiary_method"] = "char/4 heuristic" if exact_available else None
     return info
 

@@ -1,0 +1,1 @@
+Thinking about a neighborhood tool library map with lending rules, hours, and volunteer shifts. Could start as a static spreadsheet before any app exists.

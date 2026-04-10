@@ -1,0 +1,19 @@
+{
+  "workflow_id": "cb_07_context_pressure",
+  "required_summary_facts": [
+    "April 18 release target",
+    "Android battery drain top blocker",
+    "Freeze non-critical UI polish until after launch",
+    "QA needs a fresh build by Tuesday noon"
+  ],
+  "context_levels": [
+    "light",
+    "medium",
+    "heavy",
+    "critical"
+  ],
+  "fixture_files": [
+    "notes.txt",
+    "context_filler.txt"
+  ]
+}

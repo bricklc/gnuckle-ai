@@ -1,0 +1,4 @@
+Errands:
+- Buy toothpaste
+- Pick up package at parcel locker
+- Check if the tailor is open

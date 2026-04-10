@@ -1,0 +1,19 @@
+{
+  "workflow_id": "cb_09_implicit_convention",
+  "required_front_matter_keys": [
+    "date",
+    "author"
+  ],
+  "required_body_shape": {
+    "title_heading": "# ",
+    "closing_prefix": "Next:"
+  },
+  "summary_must_include": [
+    "staging alerts cleaned up",
+    "billing banner copy approved",
+    "rollback checklist updated",
+    "Android battery drain reproduction",
+    "weekend support coverage",
+    "launch date can hold if the two open items close by Tuesday"
+  ]
+}

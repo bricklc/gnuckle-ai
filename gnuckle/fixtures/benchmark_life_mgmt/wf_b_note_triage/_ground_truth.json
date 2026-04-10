@@ -1,0 +1,28 @@
+{
+  "workflow_id": "wf_b_note_triage",
+  "categories": {
+    "meeting_alpha.txt": "meeting-note",
+    "meeting_beta.txt": "meeting-note",
+    "meeting_gamma.txt": "meeting-note",
+    "meeting_alpha_copy.txt": "meeting-note",
+    "idea_alpha.txt": "idea",
+    "idea_beta.txt": "idea",
+    "idea_gamma.txt": "idea",
+    "todo_home.txt": "todo-list",
+    "todo_work.txt": "todo-list",
+    "empty.txt": "empty"
+  },
+  "needs_action": [
+    "meeting_alpha.txt",
+    "meeting_beta.txt",
+    "meeting_gamma.txt",
+    "todo_home.txt",
+    "todo_work.txt"
+  ],
+  "duplicate_pairs": [
+    [
+      "meeting_alpha.txt",
+      "meeting_alpha_copy.txt"
+    ]
+  ]
+}

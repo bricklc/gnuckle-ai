@@ -1,0 +1,14 @@
+{
+  "workflow_id": "wf_g_explicit_format",
+  "required_format": {
+    "date_header": "## YYYY-MM-DD",
+    "mood_tag": "[mood: X]",
+    "body_style": "bullet-list"
+  },
+  "content_must_include": [
+    "Skipped gym",
+    "reviewed thermodynamics chapter 3",
+    "feeling tired but productive"
+  ],
+  "discovery_auto_pass": true
+}

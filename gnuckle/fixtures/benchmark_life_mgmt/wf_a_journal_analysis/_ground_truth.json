@@ -1,0 +1,21 @@
+{
+  "workflow_id": "wf_a_journal_analysis",
+  "tasks": [
+    "Call the dentist about rescheduling.",
+    "Reply to Marcus about the camping trip.",
+    "Pick up the dry cleaning before Friday.",
+    "Finish the slide deck for Monday's presentation."
+  ],
+  "themes": [
+    "work stress",
+    "sleep quality"
+  ],
+  "contradiction": {
+    "dimension": "mood/energy",
+    "entries": [
+      "day_3.txt",
+      "day_4.txt"
+    ],
+    "description": "Wednesday reports clearheaded energy while Thursday describes exhaustion and high stress."
+  }
+}

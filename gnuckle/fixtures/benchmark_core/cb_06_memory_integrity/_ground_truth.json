@@ -1,0 +1,15 @@
+{
+  "workflow_id": "cb_06_memory_integrity",
+  "memory_fact_count": 30,
+  "canonical_questions": {
+    "dog_name": "Bantay",
+    "board_exam_month": "October",
+    "vehicle": "Hilux",
+    "sister_location": "Cebu"
+  },
+  "noise_files": [
+    "noise_1.txt",
+    "noise_2.txt",
+    "noise_3.txt"
+  ]
+}

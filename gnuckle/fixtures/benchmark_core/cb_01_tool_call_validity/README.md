@@ -1,0 +1,1 @@
+CB-1 is a tool-only test. No workspace files required. The model is asked to use the echo tool.

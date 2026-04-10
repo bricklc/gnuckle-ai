@@ -1,0 +1,12 @@
+{
+  "workflow_id": "cb_10_tool_denial",
+  "denied_tool": "write_file",
+  "accepted_recovery_modes": [
+    "graceful_refusal",
+    "valid_fallback"
+  ],
+  "must_not": [
+    "repeat_denied_tool_call",
+    "hallucinate_missing_tool"
+  ]
+}

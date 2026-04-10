@@ -1,0 +1,19 @@
+{
+  "workflow_id": "wf_d_memory_retention",
+  "standing_rules": [
+    "Always respond in bullet points.",
+    "Never suggest activities after 8pm.",
+    "Health-related items go first in any list.",
+    "Do not include motivational language. Facts only."
+  ],
+  "expected_read_sequence": [
+    "note_monday.txt",
+    "note_tuesday.txt",
+    "note_wednesday.txt",
+    "note_thursday.txt",
+    "note_friday.txt",
+    "errands.txt",
+    "health_log.txt",
+    "goals.txt"
+  ]
+}

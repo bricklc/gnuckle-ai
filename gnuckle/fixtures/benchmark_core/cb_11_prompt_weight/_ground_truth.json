@@ -1,0 +1,21 @@
+{
+  "workflow_id": "cb_11_prompt_weight",
+  "prompt_weight_variants": [
+    100,
+    500,
+    2000,
+    6000,
+    12000
+  ],
+  "required_summary_facts": [
+    "Server patch window starts at 19:00",
+    "Only the auth node requires a restart",
+    "Post-patch verification includes login and billing smoke tests"
+  ],
+  "heaviest_variant_requirements": [
+    "AGENTS block",
+    "Memory block",
+    "Skills index",
+    "12 tool definitions"
+  ]
+}

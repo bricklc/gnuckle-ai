@@ -1,0 +1,1 @@
+Short sync with design. The onboarding modal copy is approved, but analytics tagging is still missing for the final CTA button.

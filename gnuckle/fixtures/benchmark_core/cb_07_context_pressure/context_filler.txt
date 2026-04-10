@@ -1,0 +1,399 @@
+## Synthetic Tool History 1
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 2
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 3
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 4
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 5
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 6
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 7
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 8
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 9
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 10
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 11
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 12
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 13
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 14
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 15
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 16
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 17
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 18
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 19
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 20
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 21
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 22
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 23
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 24
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 25
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 26
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 27
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 28
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 29
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 30
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 31
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 32
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 33
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 34
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 35
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 36
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 37
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 38
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 39
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 40
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 41
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 42
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 43
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 44
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 45
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 46
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 47
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 48
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 49
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 50
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 51
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 52
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 53
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 54
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 55
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 56
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 57
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 58
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 59
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 60
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 61
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 62
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 63
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 64
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 65
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 66
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 67
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 68
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 69
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 70
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 71
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 72
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 73
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 74
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 75
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 76
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 77
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 78
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 79
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.
+
+## Synthetic Tool History 80
+Tool call completed successfully with a moderate-sized JSON payload.
+No policy denials occurred during the sequence, but the trace remained verbose.
+The assistant preserved prior constraints despite the longer conversation window.

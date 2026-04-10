@@ -1,0 +1,22 @@
+{
+  "workflow_id": "cb_12_chained_execution",
+  "required_items": [
+    "Database backup validation",
+    "Draft launch comms",
+    "Vendor risk review",
+    "Archive old test data"
+  ],
+  "urgent_items": [
+    "Database backup validation",
+    "Vendor risk review"
+  ],
+  "blocked_slots": [
+    "10:00-11:00",
+    "14:00-15:00"
+  ],
+  "standing_rules": [
+    "Urgent items must appear before non-urgent items.",
+    "No task may be assigned to a blocked slot.",
+    "Every item from inputs.txt must appear in plan.md."
+  ]
+}

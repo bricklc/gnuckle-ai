@@ -1,0 +1,1 @@
+CB-4 is a multi-turn state test. Uses add_item/update_item/read_list tools. No workspace files required — state is managed by the tool executor.
