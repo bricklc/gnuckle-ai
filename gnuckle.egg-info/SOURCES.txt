@@ -12,6 +12,7 @@ gnuckle/llama_presets.json
 gnuckle/profile.py
 gnuckle/session_store.py
 gnuckle/splash.py
+gnuckle/system_prompt.py
 gnuckle/tool_executor.py
 gnuckle/update.py
 gnuckle/version.json
@@ -26,3 +27,4 @@ gnuckle.egg-info/requires.txt
 gnuckle.egg-info/top_level.txt
 gnuckle/fixtures/fix_greeting/app.py
 gnuckle/fixtures/fix_greeting/test_app.py
+gnuckle/prompts/legacy_benchmark_system_prompt.txt
