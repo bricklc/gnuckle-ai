@@ -44,3 +44,7 @@ Context is treated as a scarce budget. Failure is preserved as data, not a kill 
 2026-04-10 - `--split-mode` is benchmark-wide runtime configuration for any current or future benchmark mode that launches local `llama-server`.
 2026-04-10 - The OpenClaude-inspired benchmark core is: persistent transcript loop, fixed visible tool list, in-band tool failures, verification before success, separate usage versus context accounting, and trace integrity.
 2026-04-10 - Ape commit summaries use a fixed structure: short `title`, then ape-voice `body` with `🍌` bullets for concrete changes and short `have X, yes, good.` outcome lines.
+2026-04-10 - Common post-update flow is: `git pull --ff-only`, `pip install -e .`, `python -m gnuckle --version`, then run the relevant benchmark or visualizer command.
+2026-04-10 - Preferred runtime invocation is `python -m gnuckle ...`, especially after updates, because it avoids stale launcher or PATH issues.
+2026-04-10 - Version bumps should be explicit and synchronized across `gnuckle/version.json`, `pyproject.toml`, and `package.json`.
+2026-04-10 - Version bump preference is small forward increments (for example `0.2.8` to `0.2.9`, or `+0.0.1` when requested) rather than reusing an already-used version.
