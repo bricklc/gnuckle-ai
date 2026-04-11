@@ -2371,6 +2371,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                 kill_server(server_proc)
                 continue
 
+            out = None
             try:
                 if benchmark_mode == "agentic":
                     out = run_agentic_benchmark_pass(
@@ -2447,7 +2448,8 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                         system_prompt_source=system_prompt_source,
                         split_config=split_config,
                     )
-                output_files.append(out)
+                if out is not None:
+                    output_files.append(out)
             except Exception as e:
                 print(f"  ERROR during benchmark [{label}]: {e}")
                 ape_print("error")

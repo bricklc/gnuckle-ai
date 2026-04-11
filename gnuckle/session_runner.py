@@ -329,13 +329,17 @@ def run_session_benchmark(
                 if tool_name not in tools:
                     hallucinated_tools.append(tool_name)
 
-                arguments = json.loads(tc["arguments_json"] or "{}")
+                try:
+                    arguments = json.loads(tc["arguments_json"] or "{}")
+                except json.JSONDecodeError:
+                    arguments = {}
+
                 result = mock_executor.invoke(tc["id"], tool_name, arguments)
 
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc["id"],
-                    "content": json.dumps(result),
+                    "content": json.dumps(result, ensure_ascii=True),
                 })
 
             # Check if model wants to continue (more tool calls or final response)
