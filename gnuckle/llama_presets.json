@@ -21,52 +21,80 @@
   },
   "presets": [
     {
-      "name": "qwen",
+      "name": "qwen-thinking",
       "match": ["qwen"],
-      "description": "Qwen-family instruct models.",
+      "description": "Qwen3-family instruct models (thinking/tool-call mode).",
       "source": [
-        "inferred from common llama.cpp usage for Qwen-family instruct models"
+        "https://huggingface.co/Qwen/Qwen3-4B",
+        "Official model card: thinking mode defaults"
       ],
+      "notes": "Non-thinking mode uses temp=0.7, top_p=0.8. If repetition occurs, set presence_penalty=1.5. Soft switches /think and /no_think available per-turn.",
       "server_args": {
-        "temp": 0.7,
-        "top_p": 0.8,
+        "temp": 0.6,
+        "top_p": 0.95,
         "top_k": 20,
-        "repeat_penalty": 1.05,
-        "repeat_last_n": 128,
+        "repeat_penalty": 1.0,
+        "repeat_last_n": 64,
         "min_p": 0.0
       },
       "request_args": {
-        "temperature": 0.7,
-        "top_p": 0.8
+        "temperature": 0.6,
+        "top_p": 0.95
+      }
+    },
+    {
+      "name": "omniclaw",
+      "match": ["omniclaw"],
+      "description": "OmniClaw finetunes (Qwen3.5 base). Uses Qwen3 thinking-mode params.",
+      "source": [
+        "https://huggingface.co/LuffyTheFox/OmniClaw-Qwen3.5-9B-Claude-4.6-Opus-Uncensored-v2-GGUF",
+        "Qwen3.5 finetune — inherits Qwen3 sampling recommendations"
+      ],
+      "server_args": {
+        "temp": 0.6,
+        "top_p": 0.95,
+        "top_k": 20,
+        "repeat_penalty": 1.0,
+        "repeat_last_n": 64,
+        "min_p": 0.0
+      },
+      "request_args": {
+        "temperature": 0.6,
+        "top_p": 0.95
       }
     },
     {
       "name": "gemma",
       "match": ["gemma"],
-      "description": "Google Gemma-family instruct models.",
+      "description": "Google Gemma 4 family instruct models.",
       "source": [
-        "inferred from common llama.cpp usage for Gemma-family instruct models"
+        "https://huggingface.co/google/gemma-4-26b-a4b-it",
+        "https://ai.google.dev/gemma/docs/core/model_card_4",
+        "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF"
       ],
+      "notes": "Google explicitly recommends temp=1.0 for ALL use cases including tool calling. Known llama.cpp bug: tool calls leave unexpected tokens (issue #21316).",
       "server_args": {
-        "temp": 0.7,
+        "temp": 1.0,
         "top_p": 0.95,
-        "top_k": 40,
-        "repeat_penalty": 1.1,
+        "top_k": 64,
+        "repeat_penalty": 1.0,
         "repeat_last_n": 64,
         "min_p": 0.0
       },
       "request_args": {
-        "temperature": 0.7,
+        "temperature": 1.0,
         "top_p": 0.95
       }
     },
     {
       "name": "nemotron",
       "match": ["nemotron"],
-      "description": "NVIDIA Nemotron-family instruct models.",
+      "description": "NVIDIA Nemotron-3 Nano family (hybrid Mamba-Transformer).",
       "source": [
-        "inferred from common llama.cpp usage for Nemotron-family instruct models"
+        "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+        "https://huggingface.co/blog/nvidia/nemotron-3-nano-4b"
       ],
+      "notes": "Official tool-calling mode: temp=0.6, top_p=0.95. Reasoning mode uses temp=1.0. top_k and repeat_penalty not officially specified — conservative additions below.",
       "server_args": {
         "temp": 0.6,
         "top_p": 0.95,
@@ -83,21 +111,45 @@
     {
       "name": "glm",
       "match": ["glm"],
-      "description": "Zhipu GLM-family instruct models.",
+      "description": "Zhipu GLM-4.6V family (multimodal).",
       "source": [
-        "inferred from common llama.cpp usage for GLM-family instruct models"
+        "https://huggingface.co/zai-org/GLM-4.6V-Flash",
+        "https://huggingface.co/zai-org/GLM-4.7-Flash/discussions/6"
       ],
+      "notes": "Official card values: temp=0.8, top_p=0.6, top_k=2. Community agentic alternative: temp=0.6, top_k=20, top_p=0.95, rep=1.05. Overly aggressive sampling interferes with JSON tool formatting.",
       "server_args": {
-        "temp": 0.7,
-        "top_p": 0.9,
-        "top_k": 20,
+        "temp": 0.8,
+        "top_p": 0.6,
+        "top_k": 2,
+        "repeat_penalty": 1.1,
+        "repeat_last_n": 64,
+        "min_p": 0.0
+      },
+      "request_args": {
+        "temperature": 0.8,
+        "top_p": 0.6
+      }
+    },
+    {
+      "name": "lfm2",
+      "match": ["lfm2", "lfm-2"],
+      "description": "Liquid AI LFM2 MoE models.",
+      "source": [
+        "https://huggingface.co/LiquidAI/LFM2-24B-A2B",
+        "https://docs.liquid.ai/lfm/models/lfm2-24b-a2b"
+      ],
+      "notes": "Very low temp recommended officially. Native tool calling via <|tool_call_start|>/<|tool_call_end|> tokens. JSON format available via system prompt override.",
+      "server_args": {
+        "temp": 0.1,
+        "top_p": 0.95,
+        "top_k": 50,
         "repeat_penalty": 1.05,
         "repeat_last_n": 64,
         "min_p": 0.0
       },
       "request_args": {
-        "temperature": 0.7,
-        "top_p": 0.9
+        "temperature": 0.1,
+        "top_p": 0.95
       }
     },
     {
