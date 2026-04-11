@@ -33,6 +33,10 @@ class VisualizeTests(unittest.TestCase):
                 {"tps": 10.0, "ttft_ms": 500.0, "tool_accuracy_pct": 100.0, "vram_after_mb": [1200]},
                 {"tps": 8.0, "ttft_ms": 600.0, "tool_accuracy_pct": 95.0, "vram_after_mb": [1300]},
             ],
+            "aggregate": {
+                "peak_context_tokens_estimate": 4096,
+                "cumulative_context_tokens_estimate": 6144,
+            },
         }
         metrics = extract_metrics(data)
         self.assertTrue(metrics["throughput_available"])
@@ -41,6 +45,8 @@ class VisualizeTests(unittest.TestCase):
         self.assertEqual(metrics["tps_t1"], 10.0)
         self.assertEqual(metrics["tps_tn"], 8.0)
         self.assertEqual(metrics["vram_peak"], 1300)
+        self.assertEqual(metrics["peak_context_tokens"], 4096)
+        self.assertEqual(metrics["total_context_tokens"], 6144)
 
 
 if __name__ == "__main__":

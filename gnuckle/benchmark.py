@@ -1655,6 +1655,10 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "peak_context_tokens_heuristic": 0,
             "peak_context_tokens_tokenizer": 0,
             "peak_context_tokens_measured": None,
+            "cumulative_context_tokens_estimate": 0,
+            "cumulative_context_tokens_heuristic": 0,
+            "cumulative_context_tokens_tokenizer": 0,
+            "cumulative_context_tokens_measured": None,
             "prompt_tokens_per_second_bench": None,
             "generation_tokens_per_second_bench": None,
         },
@@ -1824,21 +1828,26 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
                 results["aggregate"]["peak_context_tokens_estimate"],
                 ctx_approx,
             )
+            results["aggregate"]["cumulative_context_tokens_estimate"] += int(ctx_approx)
             results["aggregate"]["peak_context_tokens_heuristic"] = max(
                 results["aggregate"]["peak_context_tokens_heuristic"],
                 ctx_approx,
             )
+            results["aggregate"]["cumulative_context_tokens_heuristic"] += int(ctx_approx)
             if ctx_counts["tokenizer"] is not None:
                 results["aggregate"]["peak_context_tokens_tokenizer"] = max(
                     results["aggregate"]["peak_context_tokens_tokenizer"],
                     int(ctx_counts["tokenizer"]),
                 )
+                results["aggregate"]["cumulative_context_tokens_tokenizer"] += int(ctx_counts["tokenizer"])
             if ctx_counts["measured"] is not None:
                 prev = results["aggregate"]["peak_context_tokens_measured"]
                 results["aggregate"]["peak_context_tokens_measured"] = max(
                     prev if prev is not None else 0,
                     int(ctx_counts["measured"]),
                 )
+                cumulative_prev = results["aggregate"]["cumulative_context_tokens_measured"]
+                results["aggregate"]["cumulative_context_tokens_measured"] = int(cumulative_prev or 0) + int(ctx_counts["measured"])
             print(
                 f"  Turn {turn_idx + 1:02d} | "
                 f"tps=0.0  ttft=n/a  tok=0  tools=0  acc=N/A%  "
@@ -1928,21 +1937,26 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             results["aggregate"]["peak_context_tokens_estimate"],
             int(result["context_tokens_estimate"]),
         )
+        results["aggregate"]["cumulative_context_tokens_estimate"] += int(result["context_tokens_estimate"])
         results["aggregate"]["peak_context_tokens_heuristic"] = max(
             results["aggregate"]["peak_context_tokens_heuristic"],
             int(result["context_tokens_heuristic"]),
         )
+        results["aggregate"]["cumulative_context_tokens_heuristic"] += int(result["context_tokens_heuristic"])
         if result["context_tokens_tokenizer"] is not None:
             results["aggregate"]["peak_context_tokens_tokenizer"] = max(
                 results["aggregate"]["peak_context_tokens_tokenizer"],
                 int(result["context_tokens_tokenizer"]),
             )
+            results["aggregate"]["cumulative_context_tokens_tokenizer"] += int(result["context_tokens_tokenizer"])
         if result["context_tokens_measured"] is not None:
             prev = results["aggregate"]["peak_context_tokens_measured"]
             results["aggregate"]["peak_context_tokens_measured"] = max(
                 prev if prev is not None else 0,
                 int(result["context_tokens_measured"]),
             )
+            cumulative_prev = results["aggregate"]["cumulative_context_tokens_measured"]
+            results["aggregate"]["cumulative_context_tokens_measured"] = int(cumulative_prev or 0) + int(result["context_tokens_measured"])
 
         turn_data = {
             "turn":                  turn_idx + 1,

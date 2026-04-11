@@ -171,6 +171,37 @@ def _peak_context_measured_from_trace(trace: list[dict]) -> int | None:
     return peak
 
 
+def _cumulative_context_tokens_from_trace(trace: list[dict]) -> int:
+    total = 0
+    for entry in trace:
+        value = entry.get("context_tokens_estimate")
+        if isinstance(value, (int, float)):
+            total += int(value)
+    return total
+
+
+def _cumulative_context_tokenizer_from_trace(trace: list[dict]) -> int | None:
+    total = 0
+    found = False
+    for entry in trace:
+        value = entry.get("context_tokens_tokenizer")
+        if isinstance(value, (int, float)):
+            total += int(value)
+            found = True
+    return total if found else None
+
+
+def _cumulative_context_measured_from_trace(trace: list[dict]) -> int | None:
+    total = 0
+    found = False
+    for entry in trace:
+        value = entry.get("context_tokens_measured")
+        if isinstance(value, (int, float)):
+            total += int(value)
+            found = True
+    return total if found else None
+
+
 def _tokenizer_label_from_trace(trace: list[dict]) -> str | None:
     for entry in trace:
         label = entry.get("tokenizer_label")
@@ -1020,6 +1051,10 @@ def build_agentic_run_summary(workflow: Workflow, episode: dict, model_name: str
         "peak_context_tokens_heuristic": _peak_context_tokens_from_trace(episode.get("trace", [])),
         "peak_context_tokens_tokenizer": _peak_context_tokenizer_from_trace(episode.get("trace", [])),
         "peak_context_tokens_measured": _peak_context_measured_from_trace(episode.get("trace", [])),
+        "cumulative_context_tokens_estimate": _cumulative_context_tokens_from_trace(episode.get("trace", [])),
+        "cumulative_context_tokens_heuristic": _cumulative_context_tokens_from_trace(episode.get("trace", [])),
+        "cumulative_context_tokens_tokenizer": _cumulative_context_tokenizer_from_trace(episode.get("trace", [])),
+        "cumulative_context_tokens_measured": _cumulative_context_measured_from_trace(episode.get("trace", [])),
         "context_window": episode.get("token_usage", {}).get("context_window"),
         "context_percent_used": episode.get("token_usage", {}).get("context_percent_used"),
         "vram_peak_mb": int(episode.get("hardware_usage", {}).get("vram_peak_mb", 0) or 0),

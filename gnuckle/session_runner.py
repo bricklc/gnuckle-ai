@@ -876,6 +876,20 @@ def run_session_benchmark(
             "provider_usage_total_tokens": usage_total_tokens(total_provider_usage),
             "invalid_execution_count": len(invalid_execution_events),
             "no_response_turn_count": sum(1 for turn in turn_results if turn.get("no_response")),
+            "peak_context_tokens_estimate": max(
+                (int(turn.get("metrics", {}).get("context_tokens_estimate", 0) or 0) for turn in turn_results),
+                default=0,
+            ),
+            "peak_context_tokens_heuristic": max(
+                (int(turn.get("metrics", {}).get("context_tokens_heuristic", 0) or 0) for turn in turn_results),
+                default=0,
+            ),
+            "cumulative_context_tokens_estimate": sum(
+                int(turn.get("metrics", {}).get("context_tokens_estimate", 0) or 0) for turn in turn_results
+            ),
+            "cumulative_context_tokens_heuristic": sum(
+                int(turn.get("metrics", {}).get("context_tokens_heuristic", 0) or 0) for turn in turn_results
+            ),
         },
         "session": {
             "mode": benchmark.get("session", {}).get("mode", "persistent"),

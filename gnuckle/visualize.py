@@ -223,7 +223,8 @@ $acc_legend
           <th>Degradation</th>
           <th>TTFT t1 (ms)</th>
           <th>TTFT $num_turns (ms)</th>
-          <th>Context MiB</th>
+          <th>Peak Ctx</th>
+          <th>Total Ctx</th>
           <th>VRAM peak (MB)</th>
           <th>Tool accuracy</th>
         </tr>
@@ -705,6 +706,7 @@ def extract_metrics(data):
     """Pull summary metrics from a single cache type run."""
     turns = data.get("turns", [])
     meta = data.get("meta", {})
+    aggregate = data.get("aggregate", {}) or {}
     throughput_benchmark = meta.get("throughput_benchmark", {}) or {}
     tps_list = [t.get("tps", 0) for t in turns if t.get("tps", 0) > 0]
     ttft_list = [t.get("ttft_ms") for t in turns if t.get("ttft_ms") is not None]
@@ -734,6 +736,20 @@ def extract_metrics(data):
         "vram_peak": vram_peak,
         "acc_avg": round(sum(acc_list) / len(acc_list), 1) if acc_list else 0,
         "acc_all": [round(v, 1) for v in acc_list],
+        "peak_context_tokens": int(
+            aggregate.get("peak_context_tokens_measured")
+            or aggregate.get("peak_context_tokens_tokenizer")
+            or aggregate.get("peak_context_tokens_heuristic")
+            or aggregate.get("peak_context_tokens_estimate")
+            or 0
+        ),
+        "total_context_tokens": int(
+            aggregate.get("cumulative_context_tokens_measured")
+            or aggregate.get("cumulative_context_tokens_tokenizer")
+            or aggregate.get("cumulative_context_tokens_heuristic")
+            or aggregate.get("cumulative_context_tokens_estimate")
+            or 0
+        ),
         "num_turns": len(turns),
     }
 
@@ -982,6 +998,11 @@ def build_html(by_cache, model_name, timestamp, system_prompt_summary="system pr
       <div class="sub {'good' if hero_m['vram_peak'] <= baseline_m['vram_peak'] else 'warn'}">vs {format_num(baseline_m['vram_peak'], 0)} {escape(baseline)}</div>
     </div>""",
             f"""    <div class="mcard">
+      <div class="val">{format_num(hero_m["total_context_tokens"], 0)}</div>
+      <div class="lbl">Total context {escape(hero)}</div>
+      <div class="sub {'good' if hero_m['total_context_tokens'] <= baseline_m['total_context_tokens'] else 'warn'}">peak {format_num(hero_m['peak_context_tokens'], 0)} tokens</div>
+    </div>""",
+            f"""    <div class="mcard">
       <div class="val">{format_pct(hero_m["acc_avg"])}</div>
       <div class="lbl">tool call accuracy</div>
       <div class="sub {'good' if hero_m['acc_avg'] >= 95 else 'warn'}">valid JSON per turn</div>
@@ -1046,7 +1067,8 @@ def build_html(by_cache, model_name, timestamp, system_prompt_summary="system pr
           <td class="{deg_class(m['degradation'])}">{emphasis[0]}{format_pct(m["degradation"])}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["ttft_t1"], 0)}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["ttft_tn"], 0)}{emphasis[1]}</td>
-          <td>{emphasis[0]}{format_num(m["vram_peak"] / 1024.0, 2)}{emphasis[1]}</td>
+          <td>{emphasis[0]}{format_num(m["peak_context_tokens"], 0)}{emphasis[1]}</td>
+          <td>{emphasis[0]}{format_num(m["total_context_tokens"], 0)}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["vram_peak"], 0)}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_pct(m["acc_avg"])}{emphasis[1]}</td>
         </tr>"""
