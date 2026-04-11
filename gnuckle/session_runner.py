@@ -14,6 +14,7 @@ from openai import OpenAI
 
 from gnuckle.benchmark import (
     accumulate_usage,
+    prompt_token_counts,
     ape_print,
     empty_usage,
     estimate_context_token_counts,
@@ -40,6 +41,16 @@ class SessionState:
     list_items: list[dict] = field(default_factory=list)
     tool_history: list[dict] = field(default_factory=list)
     tool_outputs: list[dict] = field(default_factory=list)
+
+
+def _resolve_benchmark_base_dir(raw_data: dict) -> Path:
+    source_path = raw_data.get("_path") or raw_data.get("source_path")
+    if source_path:
+        try:
+            return Path(source_path).resolve().parent
+        except Exception:
+            return BENCHMARKS_DIR
+    return BENCHMARKS_DIR
 
 
 def discover_benchmarks(search_dir: Path | None = None) -> list[dict]:
@@ -93,6 +104,17 @@ def normalize_benchmark_definition(data: dict) -> dict:
     system_prompt = session_block.get("system_prompt") or data.get("system_prompt") or ""
     standing_rules = session_block.get("standing_rules") or data.get("standing_rules") or []
     initial_state = session_block.get("initial_state") or {}
+    benchmark_base_dir = _resolve_benchmark_base_dir(data)
+    context_model = data.get("context_model") or session_block.get("context_model") or {}
+    attached_context_files = list(session_block.get("attached_context_files") or data.get("attached_context_files") or [])
+    skill_context_files = list(session_block.get("skill_context_files") or data.get("skill_context_files") or [])
+    context_groups = {
+        "base_files": list(context_model.get("base_files") or []),
+        "integration_files": list(context_model.get("integration_files") or []),
+        "style_files": list(context_model.get("style_files") or []),
+        "session_files": list(context_model.get("session_files") or []),
+        "skill_files": list(context_model.get("skill_files") or []),
+    }
 
     def normalize_expect_block(expect_block: dict) -> dict:
         expect = dict(expect_block or {})
@@ -174,7 +196,12 @@ def normalize_benchmark_definition(data: dict) -> dict:
             "carry_state_across_turns": session_block.get("carry_state_across_turns", True),
             "finish_policy": session_block.get("finish_policy", "checkpoint_or_final_only"),
             "initial_state": initial_state,
+            "attached_context_files": attached_context_files,
+            "skill_context_files": skill_context_files,
+            "context_model": context_groups,
         },
+        "source_path": str(data.get("_path") or data.get("source_path") or ""),
+        "benchmark_base_dir": str(benchmark_base_dir),
         "scoring": scoring_block,
     }
 
@@ -894,6 +921,76 @@ def _initial_session_state(benchmark: dict) -> SessionState:
     return SessionState(files=files, list_items=list_items)
 
 
+def _resolve_context_paths(benchmark: dict) -> dict[str, list[Path]]:
+    base_dir = Path(benchmark.get("benchmark_base_dir") or BENCHMARKS_DIR)
+    session_block = benchmark.get("session", {}) or {}
+    context_model = session_block.get("context_model", {}) or {}
+
+    def resolve_many(entries: list[str]) -> list[Path]:
+        resolved: list[Path] = []
+        for entry in entries or []:
+            path = Path(str(entry))
+            if not path.is_absolute():
+                path = (base_dir / path).resolve()
+            resolved.append(path)
+        return resolved
+
+    grouped = {
+        "attached": resolve_many(session_block.get("attached_context_files", []) or []),
+        "skills": resolve_many(session_block.get("skill_context_files", []) or []),
+        "base_files": resolve_many(context_model.get("base_files", []) or []),
+        "integration_files": resolve_many(context_model.get("integration_files", []) or []),
+        "style_files": resolve_many(context_model.get("style_files", []) or []),
+        "session_files": resolve_many(context_model.get("session_files", []) or []),
+        "skill_files": resolve_many(context_model.get("skill_files", []) or []),
+    }
+    return grouped
+
+
+def _load_attached_context_documents(benchmark: dict) -> list[dict]:
+    grouped_paths = _resolve_context_paths(benchmark)
+    ordered_groups = [
+        ("attached", grouped_paths["attached"]),
+        ("base_files", grouped_paths["base_files"]),
+        ("integration_files", grouped_paths["integration_files"]),
+        ("style_files", grouped_paths["style_files"]),
+        ("session_files", grouped_paths["session_files"]),
+        ("skills", grouped_paths["skills"]),
+        ("skill_files", grouped_paths["skill_files"]),
+    ]
+    seen: set[str] = set()
+    documents: list[dict] = []
+    for group_name, paths in ordered_groups:
+        for path in paths:
+            key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            content = path.read_text(encoding="utf-8")
+            documents.append(
+                {
+                    "group": group_name,
+                    "path": str(path),
+                    "name": path.name,
+                    "content": content,
+                }
+            )
+    return documents
+
+
+def _render_session_system_prompt(base_system_prompt: str, standing_rules: list[str], context_docs: list[dict]) -> str:
+    rendered = base_system_prompt or ""
+    if standing_rules:
+        rules_text = "\n".join(f"- {rule}" for rule in standing_rules)
+        rendered = f"{rendered}\n\nStanding rules:\n{rules_text}".strip()
+    if context_docs:
+        blocks = []
+        for doc in context_docs:
+            blocks.append(f"[Attached Context: {doc['name']}]\n{doc['content'].strip()}")
+        rendered = f"{rendered}\n\n" + "\n\n".join(blocks)
+    return rendered.strip()
+
+
 def run_session_benchmark(
     benchmark: dict,
     base_url: str,
@@ -911,12 +1008,11 @@ def run_session_benchmark(
     bench_id = benchmark["id"]
     turns = benchmark["turns"]
     tools = benchmark["tools"]
-    system_prompt = benchmark["system_prompt"]
+    base_system_prompt = benchmark["system_prompt"]
     standing_rules = benchmark.get("standing_rules", [])
-
-    if standing_rules:
-        rules_text = "\n".join(f"- {rule}" for rule in standing_rules)
-        system_prompt = f"{system_prompt}\n\nStanding rules:\n{rules_text}"
+    attached_context_docs = _load_attached_context_documents(benchmark)
+    system_prompt = _render_session_system_prompt(base_system_prompt, standing_rules, attached_context_docs)
+    prompt_counts = prompt_token_counts(system_prompt, base_url=base_url)
 
     client = OpenAI(base_url=base_url, api_key="none")
     messages = [{"role": "system", "content": system_prompt}]
@@ -934,7 +1030,7 @@ def run_session_benchmark(
 
     print_header(f"Session Benchmark: {benchmark['title']}")
     print_step(f"id: {bench_id}  turns: {len(turns)}  tools: {len(tools)}")
-    print_step(f"rules: {len(standing_rules)}  type: persistent session")
+    print_step(f"rules: {len(standing_rules)}  attached-context: {len(attached_context_docs)}  type: persistent session")
     print()
 
     if observer is not None:
@@ -1337,6 +1433,22 @@ def run_session_benchmark(
             "total_turns": len(turns),
             "tools_available": tools,
             "standing_rules": standing_rules,
+            "base_system_prompt": base_system_prompt,
+            "rendered_system_prompt": system_prompt,
+            "attached_context_documents": [
+                {
+                    "group": doc["group"],
+                    "name": doc["name"],
+                    "path": doc["path"],
+                    "words": len(doc["content"].split()),
+                    "chars": len(doc["content"]),
+                }
+                for doc in attached_context_docs
+            ],
+            "attached_context_document_count": len(attached_context_docs),
+            "system_prompt_tokens_heuristic": prompt_counts["heuristic"],
+            "system_prompt_tokens_tokenizer": prompt_counts["tokenizer"],
+            "system_prompt_tokens_measured": prompt_counts["measured"],
             "timestamp": datetime.now().isoformat(),
         },
         "aggregate": {

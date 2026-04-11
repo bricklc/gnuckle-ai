@@ -477,6 +477,57 @@ class SessionRunnerTests(unittest.TestCase):
         transcript_kinds = [entry["kind"] for entry in result["session"]["transcript"]]
         self.assertIn("correction_prompt", transcript_kinds)
 
+    def test_attached_context_files_are_loaded_into_rendered_system_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ctx_dir = root / "context"
+            ctx_dir.mkdir(parents=True, exist_ok=True)
+            rules_path = ctx_dir / "HARNESS_RULES.md"
+            rules_path.write_text("# Harness Rules\n- current file state matters", encoding="utf-8")
+
+            benchmark = {
+                "_path": str(root / "bench.json"),
+                "id": "bench",
+                "title": "Bench",
+                "type": "session",
+                "system_prompt": "sys",
+                "tools": ["echo"],
+                "session": {
+                    "type": "session",
+                    "context_model": {
+                        "base_files": ["context/HARNESS_RULES.md"],
+                    },
+                },
+                "turns": [
+                    {
+                        "id": "t01",
+                        "prompt": "Say hi.",
+                        "active_tools": [],
+                        "expect": {"response_contains": ["hi"], "finish_required": False},
+                    }
+                ],
+            }
+
+            FakeOpenAI.responses = [
+                fake_response(content="hi"),
+            ]
+
+            with (
+                patch("gnuckle.session_runner.OpenAI", FakeOpenAI),
+                patch("gnuckle.session_runner.estimate_context_token_counts", return_value={"measured": 40, "heuristic": 40}),
+                patch("gnuckle.session_runner.get_hardware_snapshot", return_value={"vram_peak_mb": 1000}),
+                patch("gnuckle.session_runner.empty_usage", return_value={"output_tokens": 0}),
+                patch("gnuckle.session_runner.update_usage", side_effect=lambda current, usage: usage or {"output_tokens": 0}),
+                patch("gnuckle.session_runner.accumulate_usage", side_effect=lambda total, usage: {"output_tokens": (total or {}).get("output_tokens", 0) + (usage or {}).get("output_tokens", 0)}),
+                patch("gnuckle.session_runner.usage_total_tokens", side_effect=lambda usage: (usage or {}).get("output_tokens", 0)),
+            ):
+                result = run_session_benchmark(benchmark, base_url="http://localhost:8080/v1")
+
+            rendered = result["meta"]["rendered_system_prompt"]
+            self.assertIn("Attached Context: HARNESS_RULES.md", rendered)
+            self.assertIn("current file state matters", rendered)
+            self.assertEqual(result["meta"]["attached_context_document_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

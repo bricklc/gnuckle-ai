@@ -20,7 +20,26 @@
     "mode": "persistent",
     "carry_state_across_turns": true,
     "finish_policy": "checkpoint_or_final_only",
-    "system_prompt": "You are Gnuckle, a bounded benchmark agent operating inside a persistent session benchmark. This benchmark is intentionally generous: you are being given explicit standing rules, stable conventions, and reusable context up front so you have the highest fair chance to succeed later without reminders. Your job is to maximize correctness, continuity, and tool discipline under growing context pressure. For each turn, infer the user's real need, not just surface wording. Use tools when workspace state or bounded list state must be inspected or changed. Avoid tools when the user explicitly asks for memory-only recall or when enough session context already exists to answer without invention. Prefer the smallest correct set of active tools. Preserve the latest correct fact when old and new notes conflict. If a user prompt is messy, filter distractors and act on the operative instruction. When producing artifacts, keep them compact and operator-useful unless the user asks for more detail. Continue naturally after tool results. Use only the active tools for the current turn. Never call unavailable tools. Only call finish when the user explicitly asks for a checkpoint or final wrap-up. If you cannot complete a request because the required tool does not exist, say so plainly without inventing actions. A turn is only complete when you emit a substantive assistant response, a valid tool call, an explicit refusal, or an explicit error statement.",
+    "context_model": {
+      "base_files": [
+        "context/benefit_of_doubt_standard/HARNESS_RULES.md",
+        "context/benefit_of_doubt_standard/TOOL_GUIDANCE.md"
+      ],
+      "integration_files": [
+        "context/benefit_of_doubt_standard/INTEGRATION_SEMANTICS.md"
+      ],
+      "style_files": [
+        "context/benefit_of_doubt_standard/ARTIFACT_STYLE.md"
+      ],
+      "session_files": [
+        "context/benefit_of_doubt_standard/SESSION_FACTS.md"
+      ],
+      "skill_files": [
+        "context/benefit_of_doubt_standard/skills/tracker-maintenance.md",
+        "context/benefit_of_doubt_standard/skills/handoff-artifact.md"
+      ]
+    },
+    "system_prompt": "You are Gnuckle, an assistant operating inside a persistent workspace session. You are being given explicit standing rules, stable conventions, and reusable context up front so you have the highest fair chance to succeed later without reminders. Your job is to maximize correctness, continuity, and tool discipline under growing context pressure. For each turn, infer the user's real need, not just surface wording. Use tools when workspace state or bounded list state must be inspected or changed. Avoid tools when the user explicitly asks for memory-only recall or when enough session context already exists to answer without invention. Prefer the smallest correct set of active tools. Preserve the latest correct fact when old and new notes conflict. If a user prompt is messy, filter distractors and act on the operative instruction. When producing artifacts, keep them compact and operator-useful unless the user asks for more detail. Continue naturally after tool results. Use only the active tools for the current turn. Never call unavailable tools. Only call finish when the user explicitly asks for a checkpoint or final wrap-up. If you cannot complete a request because the required tool does not exist, say so plainly without inventing actions. A turn is only complete when you emit a substantive assistant response, a valid tool call, an explicit refusal, or an explicit error statement.",
     "standing_rules": [
       "Always respond in bullet points when summarizing, checkpointing, or wrapping up.",
       "Never call a tool that is not active for the current turn.",
@@ -44,7 +63,7 @@
       "list_items": []
     }
   },
-  "system_prompt": "You are Gnuckle, a bounded benchmark agent operating inside a persistent session benchmark. This benchmark is intentionally generous: you are being given explicit standing rules, stable conventions, and reusable context up front so you have the highest fair chance to succeed later without reminders. Your job is to maximize correctness, continuity, and tool discipline under growing context pressure. For each turn, infer the user's real need, not just surface wording. Use tools when workspace state or bounded list state must be inspected or changed. Avoid tools when the user explicitly asks for memory-only recall or when enough session context already exists to answer without invention. Prefer the smallest correct set of active tools. Preserve the latest correct fact when old and new notes conflict. If a user prompt is messy, filter distractors and act on the operative instruction. When producing artifacts, keep them compact and operator-useful unless the user asks for more detail. Continue naturally after tool results. Use only the active tools for the current turn. Never call unavailable tools. Only call finish when the user explicitly asks for a checkpoint or final wrap-up. If you cannot complete a request because the required tool does not exist, say so plainly without inventing actions. A turn is only complete when you emit a substantive assistant response, a valid tool call, an explicit refusal, or an explicit error statement.",
+  "system_prompt": "You are Gnuckle, an assistant operating inside a persistent workspace session. You are being given explicit standing rules, stable conventions, and reusable context up front so you have the highest fair chance to succeed later without reminders. Your job is to maximize correctness, continuity, and tool discipline under growing context pressure. For each turn, infer the user's real need, not just surface wording. Use tools when workspace state or bounded list state must be inspected or changed. Avoid tools when the user explicitly asks for memory-only recall or when enough session context already exists to answer without invention. Prefer the smallest correct set of active tools. Preserve the latest correct fact when old and new notes conflict. If a user prompt is messy, filter distractors and act on the operative instruction. When producing artifacts, keep them compact and operator-useful unless the user asks for more detail. Continue naturally after tool results. Use only the active tools for the current turn. Never call unavailable tools. Only call finish when the user explicitly asks for a checkpoint or final wrap-up. If you cannot complete a request because the required tool does not exist, say so plainly without inventing actions. A turn is only complete when you emit a substantive assistant response, a valid tool call, an explicit refusal, or an explicit error statement.",
   "standing_rules": [
     "Always respond in bullet points when summarizing, checkpointing, or wrapping up.",
     "Never call a tool that is not active for the current turn.",
@@ -62,10 +81,10 @@
     {"name": "write_file", "description": "Create or overwrite a text file in the workspace.", "category": "filesystem"},
     {"name": "list_files", "description": "List files in the workspace.", "category": "filesystem"},
     {"name": "append_file", "description": "Append text to a file in the workspace.", "category": "filesystem"},
-    {"name": "get_date", "description": "Return the benchmark's anchored date.", "category": "utility"},
-    {"name": "add_item", "description": "Add an item to the bounded benchmark list state.", "category": "list"},
-    {"name": "update_item", "description": "Update an existing benchmark list item.", "category": "list"},
-    {"name": "read_list", "description": "Read the current bounded benchmark list state.", "category": "list"},
+    {"name": "get_date", "description": "Return the session's anchored date.", "category": "utility"},
+    {"name": "add_item", "description": "Add an item to the bounded tracker list state.", "category": "list"},
+    {"name": "update_item", "description": "Update an existing tracker list item.", "category": "list"},
+    {"name": "read_list", "description": "Read the current bounded tracker list state.", "category": "list"},
     {"name": "finish", "description": "Mark a checkpoint or final completion.", "category": "control"}
   ],
   "scoring": {
@@ -78,13 +97,13 @@
     {
       "id": "t01_echo_boot",
       "title": "Echo boot marker",
-      "prompt": "Use the echo tool to repeat the phrase: benefit of doubt benchmark started.",
+      "prompt": "Use the echo tool to repeat the phrase: workspace session started.",
       "active_tools": ["echo"],
       "expect": {
         "tools_called": ["echo"],
         "tools_not_called": ["read_file", "write_file", "finish"],
         "finish_required": false,
-        "response_contains": ["benefit of doubt benchmark started"]
+        "response_contains": ["workspace session started"]
       }
     },
     {
@@ -115,14 +134,14 @@
     {
       "id": "t04_write_session_open",
       "title": "Write and verify opening note",
-      "prompt": "Write 'session opened for benefit of doubt benchmark' to session_open.txt, then read it back to confirm.",
+      "prompt": "Write 'session opened for workspace operations' to session_open.txt, then read it back to confirm.",
       "active_tools": ["write_file", "read_file"],
       "expect": {
         "tools_called": ["write_file", "read_file"],
         "tools_not_called": ["append_file", "list_files"],
         "tool_order": ["write_file", "read_file"],
         "finish_required": false,
-        "response_contains": ["session opened for benefit of doubt benchmark"]
+        "response_contains": ["session opened for workspace operations"]
       }
     },
     {
@@ -183,7 +202,7 @@
     {
       "id": "t09_append_dated_ops_note",
       "title": "Append a dated line to ops log",
-      "prompt": "Get today's date, then append a short dated line to ops_log.txt saying the benchmark session is active.",
+      "prompt": "Get today's date, then append a short dated line to ops_log.txt saying the workspace session is active.",
       "active_tools": ["get_date", "append_file"],
       "expect": {
         "tools_called": ["get_date", "append_file"],
@@ -520,27 +539,27 @@
     {
       "id": "t33_add_archive_item",
       "title": "Add archive artifact task",
-      "prompt": "Add 'archive benchmark artifacts' to the tracker, then read the tracker.",
+      "prompt": "Add 'archive session artifacts' to the tracker, then read the tracker.",
       "active_tools": ["add_item", "read_list"],
       "expect": {
         "tools_called": ["add_item", "read_list"],
         "tools_not_called": ["update_item", "read_file"],
         "tool_order": ["add_item", "read_list"],
         "finish_required": false,
-        "response_contains": ["archive benchmark artifacts"]
+        "response_contains": ["archive session artifacts"]
       }
     },
     {
       "id": "t34_long_dump_late_tracker_update",
       "title": "Late long dump with stale and current tracker facts",
-      "prompt": "Messy follow-up notes:\n\n- old wording for tracker said just ship release notes\n- latest wording should be ship release notes draft\n- dentist is still next Wednesday, do not regress that\n- archive benchmark artifacts should stay\n- ignore this completely unrelated note about buying tape\n- make the tracker reflect the latest wording and show me the result\n\nThat should be enough.",
+      "prompt": "Messy follow-up notes:\n\n- old wording for tracker said just ship release notes\n- latest wording should be ship release notes draft\n- dentist is still next Wednesday, do not regress that\n- archive session artifacts should stay\n- ignore this completely unrelated note about buying tape\n- make the tracker reflect the latest wording and show me the result\n\nThat should be enough.",
       "active_tools": ["update_item", "read_list", "add_item"],
       "expect": {
         "tools_called": ["update_item", "read_list"],
         "tools_not_called": ["add_item", "read_file", "write_file"],
         "tool_order": ["update_item", "read_list"],
         "finish_required": false,
-        "response_contains": ["ship release notes draft", "book dentist appointment for next Wednesday", "archive benchmark artifacts"]
+        "response_contains": ["ship release notes draft", "book dentist appointment for next Wednesday", "archive session artifacts"]
       }
     },
     {
@@ -555,8 +574,8 @@
         "evidence_mode": "memory_only",
         "scoring_mode": "semantic_recall",
         "expected_agenda_items": ["9am review todo", "11am config check", "2pm deploy staging", "4pm journal update"],
-        "expected_tracker_items": ["buy 2 liters of oat milk", "ship release notes draft", "archive benchmark artifacts"],
-        "response_contains": ["9am review todo", "11am config check", "2pm deploy staging", "4pm journal update", "buy 2 liters of oat milk", "ship release notes draft", "archive benchmark artifacts"],
+        "expected_tracker_items": ["buy 2 liters of oat milk", "ship release notes draft", "archive session artifacts"],
+        "response_contains": ["9am review todo", "11am config check", "2pm deploy staging", "4pm journal update", "buy 2 liters of oat milk", "ship release notes draft", "archive session artifacts"],
         "response_format": "bullet_points"
       }
     },
@@ -596,7 +615,7 @@
         "tools_called": [],
         "tools_not_called": ["read_file", "write_file", "append_file", "list_files", "read_list"],
         "finish_required": false,
-        "response_contains": ["9090", "handoff.md", "rollout.md", "ship release notes draft", "archive benchmark artifacts"],
+        "response_contains": ["9090", "handoff.md", "rollout.md", "ship release notes draft", "archive session artifacts"],
         "response_format": "bullet_points"
       }
     },
@@ -624,7 +643,7 @@
         "evidence_mode": "memory_only",
         "scoring_mode": "semantic_recall",
         "response_contains_literal": ["9090", "handoff.md", "rollout.md", "status.txt", "daily_log.txt"],
-        "response_contains_normalized": ["ship release notes draft", "archive benchmark artifacts", "daily agenda"],
+        "response_contains_normalized": ["ship release notes draft", "archive session artifacts", "daily agenda"],
         "expected_categories": ["config change", "generated artifacts", "tracker changes", "daily agenda", "open work"],
         "response_format": "bullet_points",
         "response_format_rules": ["no_headings", "no_tables", "flat_bullets"]
