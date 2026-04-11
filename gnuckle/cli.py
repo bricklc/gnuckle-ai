@@ -27,6 +27,8 @@ def cmd_benchmark(args):
         workflow_suite=args.workflow_suite,
         session_mode=args.session_mode,
         use_jinja=not args.no_jinja,
+        live_trace=args.live_trace,
+        trace_prompts=args.trace_prompts,
     )
 
 
@@ -138,6 +140,17 @@ def main():
         choices=["fresh_session", "full_history"],
         default=None,
         help="agentic session reuse mode",
+    )
+    bench.add_argument(
+        "--live-trace",
+        action="store_true",
+        help="show a live terminal harness trace for agentic runs",
+    )
+    bench.add_argument(
+        "--trace-prompts",
+        choices=["off", "summary", "full"],
+        default="summary",
+        help="how much prompt text to show in live trace mode",
     )
     bench.set_defaults(func=cmd_benchmark)
 

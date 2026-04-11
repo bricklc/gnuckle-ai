@@ -225,6 +225,105 @@ def sanitize_label(text: str) -> str:
     return cleaned.strip("-") or "unknown"
 
 
+def _trim_block(text: str, limit: int = 900) -> str:
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "\n... [truncated]"
+
+
+def make_agentic_observer(show_prompts: str = "summary"):
+    def observer(event_type: str, payload: dict) -> None:
+        if event_type == "episode_start":
+            print("\n" + "-" * 62)
+            print(f"  SIM {payload.get('workflow_id')} :: {payload.get('title')}")
+            print(f"  Workspace : {payload.get('workspace')}")
+            print(f"  Tools     : {', '.join(payload.get('active_tools', []))}")
+            if show_prompts != "off":
+                print("  User Event")
+                print("  ----------")
+                print(_trim_block(str(payload.get("user_event", ""))))
+            if show_prompts == "full":
+                print("\n  System Prompt")
+                print("  -------------")
+                print(_trim_block(str(payload.get("system_prompt", "")), limit=2400))
+            print("-" * 62)
+            return
+        if event_type == "turn_start":
+            print(f"\n  Turn {payload.get('turn')}")
+            return
+        if event_type == "model_request":
+            if show_prompts == "off":
+                return
+            prompt = str(payload.get("prompt", "")).strip()
+            if not prompt:
+                return
+            print(f"  Prompt [{payload.get('attempt')}]")
+            print("  -----------")
+            print(_trim_block(prompt, limit=1200 if show_prompts == "full" else 360))
+            return
+        if event_type in {"assistant_action", "plaintext_turn"}:
+            latency = payload.get("latency_ms")
+            context = payload.get("context_tokens_estimate")
+            vram = ((payload.get("hardware_usage") or {}).get("vram_peak_mb"))
+            meta = []
+            if latency is not None:
+                meta.append(f"{latency} ms")
+            if context is not None:
+                meta.append(f"ctx {context}")
+            if vram:
+                meta.append(f"vram {vram}")
+            meta_text = " | ".join(meta)
+            print(f"  Assistant{': ' + meta_text if meta_text else ''}")
+            print("  ----------")
+            print(_trim_block(str(payload.get("content", "")), limit=1400))
+            return
+        if event_type == "tool_call":
+            print(f"  Tool Call  : {payload.get('tool_name')}")
+            print(f"  Arguments  : {json.dumps(payload.get('arguments', {}), ensure_ascii=True)}")
+            return
+        if event_type == "tool_result":
+            result = payload.get("result") or {}
+            status = "ok" if payload.get("ok") else "error"
+            print(f"  Tool Result: {payload.get('tool_name')} [{status}]")
+            if payload.get("ok"):
+                content = result.get("content")
+                summary = result.get("summary")
+                shown = summary if summary else json.dumps(content, ensure_ascii=True) if not isinstance(content, str) else content
+                if shown:
+                    print(_trim_block(str(shown), limit=500))
+            else:
+                print(_trim_block(str(result.get("error", "tool failed")), limit=500))
+            return
+        if event_type == "tool_retry":
+            print(f"  Retry      : {payload.get('reason')}")
+            return
+        if event_type == "repair_prompt":
+            print(f"  Repair     : {payload.get('reason')}")
+            return
+        if event_type == "mid_task_injection":
+            print("  Injection")
+            print("  ---------")
+            print(_trim_block(str(payload.get("content", "")), limit=500))
+            return
+        if event_type == "verification":
+            result = payload.get("result") or {}
+            print(f"  Verify     : {payload.get('method')} -> {'pass' if payload.get('verification_passed') else 'fail'}")
+            if result:
+                print(_trim_block(json.dumps(result, ensure_ascii=True), limit=500))
+            return
+        if event_type == "timeout":
+            print("  Timeout    : harness hit workflow timeout")
+            return
+        if event_type == "final_result":
+            print(f"  Final      : {payload.get('status')} ({payload.get('failure_reason') or 'ok'})")
+            summary = payload.get("summary")
+            if summary:
+                print(_trim_block(str(summary), limit=500))
+            return
+    return observer
+
+
 def create_run_output_dir(base_output: Path, benchmark_mode: str, model_path: Path) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     model_label = sanitize_label(model_path.stem)
@@ -1488,7 +1587,8 @@ def interactive_setup(scan_dir=None):
 
 def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset=None,
                                workflow_suite=DEFAULT_WORKFLOW_SUITE, session_mode=DEFAULT_SESSION_MODE,
-                               max_turns=None, system_prompt=None, server_pid=None, split_config=None):
+                               max_turns=None, system_prompt=None, server_pid=None, split_config=None,
+                               live_trace: bool = False, trace_prompts: str = "summary"):
     from gnuckle.agentic_runtime import run_agentic_episode
     from gnuckle.benchmark_scoring import aggregate_workflow_runs, assign_type, finalize_benchmark_summary
     from gnuckle.workflow_loader import load_workflow_suite
@@ -1496,6 +1596,7 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
     workflows = load_workflow_suite(workflow_suite)
     if not workflows:
         raise ValueError(f"workflow suite has no workflows: {workflow_suite}")
+    observer = make_agentic_observer(show_prompts=trace_prompts) if live_trace else None
 
     def run_group(group, label):
         summaries = []
@@ -1533,6 +1634,7 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
                     system_prompt_override=system_prompt,
                     server_pid=server_pid,
                     context_window=get_context_window(preset),
+                    observer=observer,
                 )
                 print(
                     f"  Episode | status={episode['status']}  "
@@ -1647,7 +1749,8 @@ def _print_run_banner(benchmark_mode, model_path, server_path, output_path, pres
 # ── FULL BENCHMARK ORCHESTRATOR ──────────────────────────────────────────────
 def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, scan_dir=None,
                        output_dir=None, num_turns=None, port=None, profile_path=None,
-                       workflow_suite=None, session_mode=None, use_jinja=True):
+                       workflow_suite=None, session_mode=None, use_jinja=True,
+                       live_trace: bool = False, trace_prompts: str = "summary"):
     profile = {}
     if profile_path:
         profile = load_profile(profile_path)
@@ -1789,6 +1892,8 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                         system_prompt=system_prompt,
                         server_pid=getattr(server_proc, "pid", None),
                         split_config=split_config,
+                        live_trace=live_trace,
+                        trace_prompts=trace_prompts,
                     )
                 else:
                     out = run_benchmark_pass(

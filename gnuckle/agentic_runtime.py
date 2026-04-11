@@ -135,6 +135,15 @@ def _append_trace(trace: list[dict], entry_type: str, **payload) -> None:
     trace.append({"type": entry_type, **payload})
 
 
+def _emit_observer(observer, event_type: str, **payload) -> None:
+    if observer is None:
+        return
+    try:
+        observer(event_type, payload)
+    except Exception:
+        return
+
+
 def _peak_context_tokens_from_trace(trace: list[dict]) -> int:
     peak = 0
     for entry in trace:
@@ -317,7 +326,7 @@ def _run_verification(executor: ToolExecutor, workflow: Workflow) -> dict:
 def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, request_args: dict | None = None,
                         session_mode: str = "fresh_session", max_turns_override: int | None = None,
                         system_prompt_override: str | None = None, server_pid: int | None = None,
-                        context_window: int | None = None) -> tuple[dict, Path]:
+                        context_window: int | None = None, observer=None) -> tuple[dict, Path]:
     request_args = request_args or {}
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -341,6 +350,18 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
 
     trace = []
     _append_trace(trace, "event", role="user", event_type=workflow.event_type, content=user_event)
+    _emit_observer(
+        observer,
+        "episode_start",
+        workflow_id=workflow.workflow_id,
+        title=workflow.title,
+        workspace=str(workspace_dir),
+        system_prompt=system_prompt,
+        user_event=user_event,
+        max_turns=max_turns,
+        active_tools=list(workflow.active_tools),
+        expected_tools=list(workflow.expected_tools),
+    )
 
     episode_id = f"{workflow.workflow_id}_{uuid4().hex[:12]}"
     wall_start = time.perf_counter()
@@ -376,14 +397,24 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                 status = "timeout"
                 failure_reason = "timeout"
                 _append_trace(trace, "final_result", status=status, failure_reason=failure_reason)
+                _emit_observer(observer, "timeout", turn=turn_index, status=status, failure_reason=failure_reason)
                 break
 
             assistant_text = ""
             tool_calls = []
             latency_ms = 0.0
             retry_errors = []
+            _emit_observer(observer, "turn_start", turn=turn_index)
 
             for attempt in range(MAX_MALFORMED_TOOL_RETRIES + 1):
+                _emit_observer(
+                    observer,
+                    "model_request",
+                    turn=turn_index,
+                    attempt=attempt + 1,
+                    prompt=user_event if turn_index == 1 and attempt == 0 else messages[-1].get("content", ""),
+                    message_count=len(messages),
+                )
                 turn_started = time.perf_counter()
                 sampler = workflow.sampler_config
                 response = client.chat.completions.create(
@@ -445,6 +476,18 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                     content=assistant_text,
                     tool_calls=tool_calls,
                 )
+                _emit_observer(
+                    observer,
+                    "assistant_action",
+                    turn=turn_index,
+                    attempt=attempt + 1,
+                    content=assistant_text,
+                    tool_calls=tool_calls,
+                    latency_ms=latency_ms,
+                    context_tokens_estimate=context_tokens_estimate,
+                    context_percent_used=context_percent_used,
+                    hardware_usage=hardware_usage,
+                )
 
                 if not tool_calls:
                     if workflow.supports_plaintext_turns:
@@ -455,6 +498,7 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                             content=assistant_text,
                         )
                         messages.append({"role": "assistant", "content": assistant_text or ""})
+                        _emit_observer(observer, "plaintext_turn", turn=turn_index, content=assistant_text)
                     else:
                         _append_trace(
                             trace,
@@ -469,6 +513,12 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                                 "role": "user",
                                 "content": "Previous response did not call an allowed tool or finish. Use the allowed tools and end with finish when ready.",
                             }
+                        )
+                        _emit_observer(
+                            observer,
+                            "repair_prompt",
+                            turn=turn_index,
+                            reason="assistant responded without finish tool",
                         )
                     tool_calls = []
                     break
@@ -495,6 +545,7 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                         attempt=attempt + 1,
                         reason=invalid_reason,
                     )
+                    _emit_observer(observer, "tool_retry", turn=turn_index, attempt=attempt + 1, reason=invalid_reason)
                     continue
 
                 if invalid_reason:
@@ -533,6 +584,14 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                         }
                         _append_trace(
                             trace,
+                            "tool_result",
+                            turn=turn_index,
+                            tool_name=tool_call["name"],
+                            ok=False,
+                            result=tool_error,
+                        )
+                        _emit_observer(
+                            observer,
                             "tool_result",
                             turn=turn_index,
                             tool_name=tool_call["name"],
@@ -599,6 +658,15 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                     active=tool_name in workflow.active_tools,
                     hardware_usage=get_hardware_snapshot(server_pid),
                 )
+                _emit_observer(
+                    observer,
+                    "tool_call",
+                    turn=turn_index,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    expected=tool_name in workflow.expected_tools,
+                    active=tool_name in workflow.active_tools,
+                )
 
                 result = executor.invoke(tool_call_id, tool_name, arguments)
                 if result.get("denied"):
@@ -616,6 +684,14 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                     ok=result.get("ok", False),
                     result=result,
                     hardware_usage=get_hardware_snapshot(server_pid),
+                )
+                _emit_observer(
+                    observer,
+                    "tool_result",
+                    turn=turn_index,
+                    tool_name=tool_name,
+                    ok=result.get("ok", False),
+                    result=result,
                 )
                 messages.append(_tool_message(tool_call_id, result))
 
@@ -637,6 +713,14 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                         method=workflow.verification.method,
                         result=verification_result,
                     )
+                    _emit_observer(
+                        observer,
+                        "verification",
+                        turn=turn_index,
+                        method=workflow.verification.method,
+                        result=verification_result,
+                        verification_passed=verification_passed,
+                    )
                     task_completed = verification_passed if workflow.success_rule.type == "test_pass" else True
                     if task_completed:
                         status = "completed"
@@ -647,6 +731,15 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                     _append_trace(
                         trace,
                         "final_result",
+                        status=status,
+                        failure_reason=failure_reason,
+                        summary=final_summary,
+                        verification_passed=verification_passed,
+                    )
+                    _emit_observer(
+                        observer,
+                        "final_result",
+                        turn=turn_index,
                         status=status,
                         failure_reason=failure_reason,
                         summary=final_summary,
@@ -698,16 +791,19 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
             if injection_text:
                 messages.append({"role": "user", "content": injection_text})
                 _append_trace(trace, "mid_task_injection", turn=turn_index, content=injection_text)
+                _emit_observer(observer, "mid_task_injection", turn=turn_index, content=injection_text)
 
         else:
             status = "max_turns"
             failure_reason = "max_turns"
             _append_trace(trace, "final_result", status=status, failure_reason=failure_reason)
+            _emit_observer(observer, "final_result", status=status, failure_reason=failure_reason, summary=final_summary)
 
     except Exception as exc:  # pragma: no cover
         status = "harness_error"
         failure_reason = "harness_error"
         _append_trace(trace, "final_result", status=status, failure_reason=failure_reason, error=str(exc))
+        _emit_observer(observer, "final_result", status=status, failure_reason=failure_reason, error=str(exc))
 
     if status not in TERMINAL_STATUSES:
         status = "harness_error"

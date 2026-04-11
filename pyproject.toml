@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gnuckle"
-version = "0.3.0"
+version = "0.3.2"
 description = "Agentic AI benchmark for llama.cpp KV cache quantization. Accidentally GNU, intentionally simian."
 license = "MIT"
 requires-python = ">=3.10"
