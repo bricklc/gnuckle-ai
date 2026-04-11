@@ -15,6 +15,7 @@ import webbrowser
 from pathlib import Path
 from datetime import datetime
 from functools import lru_cache
+from collections import deque
 from urllib.error import URLError, HTTPError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
@@ -232,7 +233,170 @@ def _trim_block(text: str, limit: int = 900) -> str:
     return text[:limit].rstrip() + "\n... [truncated]"
 
 
-def make_agentic_observer(show_prompts: str = "summary"):
+def _terminal_width(default: int = 100) -> int:
+    try:
+        return max(72, os.get_terminal_size().columns)
+    except OSError:
+        return default
+
+
+def _line_block(title: str, body: str, width: int, max_lines: int = 10) -> list[str]:
+    heading = f"[ {title} ]"
+    border = "-" * width
+    lines = [heading, border]
+    raw = (body or "").splitlines() or [""]
+    trimmed = raw[:max_lines]
+    for line in trimmed:
+        lines.append(line[:width])
+    if len(raw) > max_lines:
+        lines.append("... [more]")
+    return lines
+
+
+class HarnessTheaterObserver:
+    def __init__(self, show_prompts: str = "summary"):
+        self.show_prompts = show_prompts
+        self.workflow_id = ""
+        self.title = ""
+        self.workspace = ""
+        self.tools = []
+        self.max_turns = 0
+        self.current_turn = 0
+        self.prompt = ""
+        self.assistant = ""
+        self.prompt_label = "Prompt"
+        self.metrics = {}
+        self.verification = ""
+        self.final = ""
+        self.events = deque(maxlen=10)
+        self.last_render_at = 0.0
+
+    def _add_event(self, text: str) -> None:
+        self.events.appendleft(text)
+
+    def _render(self) -> None:
+        width = _terminal_width()
+        os.system("cls" if os.name == "nt" else "clear")
+        top = "=" * width
+        title = f" SIMULATION | {self.workflow_id} | {self.title} "
+        print(top)
+        print(title[:width])
+        hud = (
+            f"turn {self.current_turn}/{self.max_turns or '?'}"
+            f" | ctx {self.metrics.get('context', 'n/a')}"
+            f" | vram {self.metrics.get('vram', 'n/a')}"
+            f" | latency {self.metrics.get('latency', 'n/a')}"
+            f" | workspace {self.workspace}"
+        )
+        print(hud[:width])
+        print(top)
+
+        prompt_text = "" if self.show_prompts == "off" else self.prompt
+        left = _line_block(self.prompt_label, prompt_text, width, max_lines=10)
+        left.extend(["", *_line_block("Assistant", self.assistant, width, max_lines=14)])
+        right = _line_block("Event Rail", "\n".join(self.events), width, max_lines=18)
+
+        for line in left:
+            print(line[:width])
+        print("-" * width)
+        for line in right:
+            print(line[:width])
+        if self.verification:
+            print("-" * width)
+            for line in _line_block("Verification", self.verification, width, max_lines=5):
+                print(line[:width])
+        if self.final:
+            print("-" * width)
+            for line in _line_block("Final", self.final, width, max_lines=5):
+                print(line[:width])
+        print("=" * width, flush=True)
+
+    def __call__(self, event_type: str, payload: dict) -> None:
+        if event_type == "episode_start":
+            self.workflow_id = str(payload.get("workflow_id", "unknown"))
+            self.title = str(payload.get("title", ""))
+            self.workspace = str(payload.get("workspace", ""))
+            self.tools = list(payload.get("active_tools", []))
+            self.max_turns = int(payload.get("max_turns", 0) or 0)
+            self.prompt = _trim_block(str(payload.get("user_event", "")), 1600 if self.show_prompts == "full" else 700)
+            self.prompt_label = "User Event"
+            self.assistant = ""
+            self.verification = ""
+            self.final = ""
+            self.metrics = {"context": "n/a", "vram": "n/a", "latency": "n/a"}
+            self.events.clear()
+            self._add_event(f"tools: {', '.join(self.tools)}")
+            self._render()
+            return
+        if event_type == "turn_start":
+            self.current_turn = int(payload.get("turn", 0) or 0)
+            self.prompt_label = f"Turn {self.current_turn} Prompt"
+            self._add_event(f"turn {self.current_turn} started")
+            self._render()
+            return
+        if event_type == "model_request":
+            prompt = str(payload.get("prompt", "")).strip()
+            if prompt and self.show_prompts != "off":
+                limit = 1800 if self.show_prompts == "full" else 700
+                self.prompt = _trim_block(prompt, limit)
+            self._add_event(f"model request attempt {payload.get('attempt', '?')}")
+            self._render()
+            return
+        if event_type in {"assistant_action", "plaintext_turn"}:
+            self.assistant = _trim_block(str(payload.get("content", "")), 2400)
+            self.metrics = {
+                "context": payload.get("context_tokens_estimate", self.metrics.get("context", "n/a")),
+                "vram": ((payload.get("hardware_usage") or {}).get("vram_peak_mb", self.metrics.get("vram", "n/a"))),
+                "latency": f"{payload.get('latency_ms')} ms" if payload.get("latency_ms") is not None else self.metrics.get("latency", "n/a"),
+            }
+            tool_calls = payload.get("tool_calls") or []
+            self._add_event(f"assistant replied ({len(tool_calls)} tool calls)")
+            self._render()
+            return
+        if event_type == "tool_call":
+            self._add_event(f"tool call: {payload.get('tool_name')} {json.dumps(payload.get('arguments', {}), ensure_ascii=True)}")
+            self._render()
+            return
+        if event_type == "tool_result":
+            result = payload.get("result") or {}
+            status = "ok" if payload.get("ok") else "error"
+            detail = result.get("summary") or result.get("error") or result.get("content") or ""
+            if not isinstance(detail, str):
+                detail = json.dumps(detail, ensure_ascii=True)
+            self._add_event(f"tool result: {payload.get('tool_name')} [{status}] {detail[:120]}")
+            self._render()
+            return
+        if event_type == "tool_retry":
+            self._add_event(f"retry: {payload.get('reason')}")
+            self._render()
+            return
+        if event_type == "repair_prompt":
+            self._add_event(f"repair: {payload.get('reason')}")
+            self._render()
+            return
+        if event_type == "mid_task_injection":
+            self._add_event(f"injection: {str(payload.get('content', ''))[:120]}")
+            self._render()
+            return
+        if event_type == "verification":
+            result = payload.get("result") or {}
+            text = json.dumps(result, ensure_ascii=True)
+            self.verification = f"{payload.get('method')} -> {'pass' if payload.get('verification_passed') else 'fail'}\n{text}"
+            self._add_event(f"verification: {'pass' if payload.get('verification_passed') else 'fail'}")
+            self._render()
+            return
+        if event_type in {"timeout", "final_result"}:
+            self.final = json.dumps(payload, ensure_ascii=True)
+            self._add_event(f"final: {payload.get('status', event_type)}")
+            self._render()
+            print()
+            return
+
+
+def make_agentic_observer(show_prompts: str = "summary", style: str = "log"):
+    if style == "theater" and _is_interactive_terminal():
+        return HarnessTheaterObserver(show_prompts=show_prompts)
+
     def observer(event_type: str, payload: dict) -> None:
         if event_type == "episode_start":
             print("\n" + "-" * 62)
@@ -1588,7 +1752,8 @@ def interactive_setup(scan_dir=None):
 def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset=None,
                                workflow_suite=DEFAULT_WORKFLOW_SUITE, session_mode=DEFAULT_SESSION_MODE,
                                max_turns=None, system_prompt=None, server_pid=None, split_config=None,
-                               live_trace: bool = False, trace_prompts: str = "summary"):
+                               live_trace: bool = False, trace_prompts: str = "summary",
+                               trace_style: str = "theater"):
     from gnuckle.agentic_runtime import run_agentic_episode
     from gnuckle.benchmark_scoring import aggregate_workflow_runs, assign_type, finalize_benchmark_summary
     from gnuckle.workflow_loader import load_workflow_suite
@@ -1596,7 +1761,7 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
     workflows = load_workflow_suite(workflow_suite)
     if not workflows:
         raise ValueError(f"workflow suite has no workflows: {workflow_suite}")
-    observer = make_agentic_observer(show_prompts=trace_prompts) if live_trace else None
+    observer = make_agentic_observer(show_prompts=trace_prompts, style=trace_style) if live_trace else None
 
     def run_group(group, label):
         summaries = []
@@ -1843,7 +2008,8 @@ def _prompt_profile_confirmation(preset):
 def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, scan_dir=None,
                        output_dir=None, num_turns=None, port=None, profile_path=None,
                        workflow_suite=None, session_mode=None, use_jinja=True,
-                       live_trace: bool = False, trace_prompts: str = "summary"):
+                       live_trace: bool = False, trace_prompts: str = "summary",
+                       trace_style: str = "theater"):
     profile = {}
     if profile_path:
         profile = load_profile(profile_path)
@@ -1987,6 +2153,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                         split_config=split_config,
                         live_trace=live_trace,
                         trace_prompts=trace_prompts,
+                        trace_style=trace_style,
                     )
                 else:
                     out = run_benchmark_pass(

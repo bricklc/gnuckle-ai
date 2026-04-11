@@ -29,6 +29,7 @@ def cmd_benchmark(args):
         use_jinja=not args.no_jinja,
         live_trace=args.live_trace,
         trace_prompts=args.trace_prompts,
+        trace_style=args.trace_style,
     )
 
 
@@ -151,6 +152,12 @@ def main():
         choices=["off", "summary", "full"],
         default="summary",
         help="how much prompt text to show in live trace mode",
+    )
+    bench.add_argument(
+        "--trace-style",
+        choices=["theater", "log"],
+        default="theater",
+        help="terminal presentation style for live trace mode",
     )
     bench.set_defaults(func=cmd_benchmark)
 
