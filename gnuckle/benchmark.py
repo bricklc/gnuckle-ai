@@ -2398,6 +2398,10 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                         base_url = DEFAULT_BASE_URL.format(port=port)
                         for bench in selected_session_benchmarks:
                             try:
+                                session_observer = make_agentic_observer(
+                                    show_prompts=trace_prompts,
+                                    style=trace_style,
+                                ) if live_trace else None
                                 session_out = run_session_benchmark(
                                     bench,
                                     base_url=base_url,
@@ -2405,6 +2409,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                                     output_dir=output_path,
                                     server_pid=getattr(server_proc, "pid", None),
                                     context_window=get_context_window(preset),
+                                    observer=session_observer,
                                 )
                                 # Save with cache label
                                 session_path = output_path / f"session_{bench['id']}_{sanitize_label(label)}.json"
@@ -2420,6 +2425,10 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                     base_url = DEFAULT_BASE_URL.format(port=port)
                     for bench in selected_session_benchmarks:
                         try:
+                            session_observer = make_agentic_observer(
+                                show_prompts=trace_prompts,
+                                style=trace_style,
+                            ) if live_trace else None
                             session_out = run_session_benchmark(
                                 bench,
                                 base_url=base_url,
@@ -2427,6 +2436,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                                 output_dir=output_path,
                                 server_pid=getattr(server_proc, "pid", None),
                                 context_window=get_context_window(preset),
+                                observer=session_observer,
                             )
                             session_out["meta"]["cache_label"] = label
                             session_path = output_path / f"session_{bench['id']}_{sanitize_label(label)}.json"
