@@ -995,10 +995,21 @@ def update_usage(usage, part_usage):
     if not part_usage:
         return usage
     data = usage.copy()
-    for key in ("input_tokens", "output_tokens", "total_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"):
-        value = getattr(part_usage, key, None)
-        if value is None and isinstance(part_usage, dict):
-            value = part_usage.get(key)
+    aliases = {
+        "input_tokens": ("input_tokens", "prompt_tokens"),
+        "output_tokens": ("output_tokens", "completion_tokens"),
+        "total_tokens": ("total_tokens",),
+        "cache_creation_input_tokens": ("cache_creation_input_tokens",),
+        "cache_read_input_tokens": ("cache_read_input_tokens",),
+    }
+    for key, names in aliases.items():
+        value = None
+        for name in names:
+            value = getattr(part_usage, name, None)
+            if value is None and isinstance(part_usage, dict):
+                value = part_usage.get(name)
+            if value is not None:
+                break
         if value is None:
             continue
         if key == "input_tokens":

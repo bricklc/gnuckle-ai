@@ -991,6 +991,140 @@ def _render_session_system_prompt(base_system_prompt: str, standing_rules: list[
     return rendered.strip()
 
 
+def _normalize_raw_tool_calls(raw_tool_calls, turn_num: int, tool_round: int) -> list[dict]:
+    normalized: list[dict] = []
+    for index, tool_call in enumerate(raw_tool_calls or []):
+        function = getattr(tool_call, "function", None)
+        normalized.append(
+            {
+                "id": getattr(tool_call, "id", "") or f"tc_{turn_num}_{tool_round}_{index}",
+                "name": getattr(function, "name", "") or "",
+                "arguments_json": getattr(function, "arguments", "") or "{}",
+            }
+        )
+    return normalized
+
+
+def _stream_session_response(
+    client: OpenAI,
+    *,
+    messages: list[dict],
+    tool_defs: list[dict],
+    request_args: dict,
+    turn_num: int,
+    tool_round: int,
+) -> dict:
+    call_start = time.perf_counter()
+    stream_or_response = client.chat.completions.create(
+        model=MODEL,
+        messages=messages,
+        tools=tool_defs,
+        tool_choice="auto",
+        stream=True,
+        stream_options={"include_usage": True},
+        temperature=request_args.get("temperature", 0.6),
+        top_p=request_args.get("top_p", 0.95),
+        max_tokens=request_args.get("max_tokens", 512),
+    )
+
+    # Test doubles and older backends may ignore stream=True and return a plain response.
+    if hasattr(stream_or_response, "choices"):
+        response = stream_or_response
+        call_elapsed_ms = round((time.perf_counter() - call_start) * 1000, 1)
+        message_usage = update_usage(empty_usage(), getattr(response, "usage", None))
+        message = response.choices[0].message
+        assistant_text = getattr(message, "content", "") or ""
+        raw_tool_calls = _normalize_raw_tool_calls(getattr(message, "tool_calls", []), turn_num, tool_round)
+        completion_tokens = int(message_usage.get("output_tokens", 0) or 0)
+        return {
+            "assistant_text": assistant_text,
+            "raw_tool_calls": raw_tool_calls,
+            "usage": message_usage,
+            "latency_ms": call_elapsed_ms,
+            "ttft_ms": call_elapsed_ms,
+            "generation_elapsed_ms": call_elapsed_ms,
+            "completion_tokens": completion_tokens,
+            "tokens_per_second": round(completion_tokens / max(call_elapsed_ms / 1000.0, 0.001), 2) if completion_tokens > 0 else 0.0,
+            "streaming": False,
+        }
+
+    first_token_t = None
+    last_token_t = None
+    full_content = ""
+    current_usage = empty_usage()
+    tc_accum: dict[int, dict] = {}
+
+    for chunk in stream_or_response:
+        now = time.perf_counter()
+        delta = chunk.choices[0].delta if getattr(chunk, "choices", None) else None
+        if getattr(chunk, "usage", None) is not None:
+            current_usage = update_usage(current_usage, chunk.usage)
+        if not delta:
+            continue
+
+        delta_has_output = False
+        content = getattr(delta, "content", None)
+        if content:
+            full_content += content
+            delta_has_output = True
+
+        tool_calls = getattr(delta, "tool_calls", None) or []
+        if tool_calls:
+            delta_has_output = True
+            for tc in tool_calls:
+                idx = getattr(tc, "index", 0)
+                if idx not in tc_accum:
+                    tc_accum[idx] = {"id": getattr(tc, "id", "") or "", "function": {"name": "", "arguments": ""}}
+                function = getattr(tc, "function", None)
+                if function is not None:
+                    fn_name = getattr(function, "name", None)
+                    fn_arguments = getattr(function, "arguments", None)
+                    if fn_name:
+                        tc_accum[idx]["function"]["name"] += fn_name
+                    if fn_arguments:
+                        tc_accum[idx]["function"]["arguments"] += fn_arguments
+                if getattr(tc, "id", None) and not tc_accum[idx]["id"]:
+                    tc_accum[idx]["id"] = tc.id
+
+        if delta_has_output:
+            if first_token_t is None:
+                first_token_t = now
+            last_token_t = now
+
+    end_t = time.perf_counter()
+    call_elapsed_ms = round((end_t - call_start) * 1000, 1)
+    ttft_ms = round((first_token_t - call_start) * 1000, 1) if first_token_t is not None else call_elapsed_ms
+    generation_elapsed_ms = round(((last_token_t or end_t) - (first_token_t or call_start)) * 1000, 1)
+    completion_tokens = int(current_usage.get("output_tokens", 0) or 0)
+    tokens_per_second = (
+        round(completion_tokens / max(generation_elapsed_ms / 1000.0, 0.001), 2)
+        if completion_tokens > 0 and generation_elapsed_ms > 0
+        else 0.0
+    )
+    raw_tool_calls = []
+    for index in sorted(tc_accum.keys()):
+        entry = tc_accum[index]
+        raw_tool_calls.append(
+            {
+                "id": entry["id"] or f"tc_{turn_num}_{tool_round}_{index}",
+                "name": entry["function"]["name"] or "",
+                "arguments_json": entry["function"]["arguments"] or "{}",
+            }
+        )
+
+    return {
+        "assistant_text": full_content,
+        "raw_tool_calls": raw_tool_calls,
+        "usage": current_usage,
+        "latency_ms": call_elapsed_ms,
+        "ttft_ms": ttft_ms,
+        "generation_elapsed_ms": generation_elapsed_ms,
+        "completion_tokens": completion_tokens,
+        "tokens_per_second": tokens_per_second,
+        "streaming": True,
+    }
+
+
 def run_session_benchmark(
     benchmark: dict,
     base_url: str,
@@ -1075,6 +1209,7 @@ def run_session_benchmark(
         current_prompt_label = "initial"
         first_response_ms = None
         total_output_tokens = 0
+        total_generation_elapsed_ms = 0.0
         actual_tools_called: list[str] = []
         hallucinated_tools: list[str] = []
         tool_round = 0
@@ -1103,38 +1238,29 @@ def run_session_benchmark(
             no_response = False
 
             while True:
-                call_start = time.perf_counter()
-                response = client.chat.completions.create(
-                    model=MODEL,
+                response_metrics = _stream_session_response(
+                    client,
                     messages=messages,
-                    tools=tool_defs_by_turn[turn_id],
-                    tool_choice="auto",
-                    temperature=request_args.get("temperature", 0.6),
-                    top_p=request_args.get("top_p", 0.95),
-                    max_tokens=request_args.get("max_tokens", 512),
+                    tool_defs=tool_defs_by_turn[turn_id],
+                    request_args=request_args,
+                    turn_num=turn_num,
+                    tool_round=tool_round,
                 )
-                call_elapsed_ms = round((time.perf_counter() - call_start) * 1000, 1)
+                call_elapsed_ms = response_metrics["latency_ms"]
                 if first_response_ms is None:
-                    first_response_ms = call_elapsed_ms
+                    first_response_ms = response_metrics["ttft_ms"]
                 if first_response_ms_attempt is None:
-                    first_response_ms_attempt = call_elapsed_ms
+                    first_response_ms_attempt = response_metrics["ttft_ms"]
 
-                message_usage = update_usage(empty_usage(), getattr(response, "usage", None))
+                message_usage = response_metrics["usage"]
                 last_usage = message_usage
                 turn_provider_usage = accumulate_usage(turn_provider_usage, message_usage)
                 total_provider_usage = accumulate_usage(total_provider_usage, message_usage)
-                total_output_tokens += int((message_usage or {}).get("output_tokens", 0) or 0)
+                total_output_tokens += int(response_metrics["completion_tokens"] or 0)
+                total_generation_elapsed_ms += float(response_metrics["generation_elapsed_ms"] or 0.0)
 
-                message = response.choices[0].message
-                assistant_text = getattr(message, "content", "") or ""
-                raw_tool_calls = [
-                    {
-                        "id": getattr(tool_call, "id", "") or f"tc_{turn_num}_{tool_round}_{index}",
-                        "name": tool_call.function.name,
-                        "arguments_json": tool_call.function.arguments or "{}",
-                    }
-                    for index, tool_call in enumerate(message.tool_calls or [])
-                ]
+                assistant_text = response_metrics["assistant_text"]
+                raw_tool_calls = response_metrics["raw_tool_calls"]
 
                 has_visible_event = bool(assistant_text.strip()) or bool(raw_tool_calls)
                 if not has_visible_event:
@@ -1346,7 +1472,12 @@ def run_session_benchmark(
         context_counts = estimate_context_token_counts(messages, tool_defs_by_turn[turn_id], base_url=base_url)
         context_estimate = int(context_counts["measured"]) if context_counts["measured"] is not None else int(context_counts["heuristic"])
         hardware = get_hardware_snapshot(server_pid)
-        tokens_per_second = round(total_output_tokens / max(turn_elapsed_ms / 1000.0, 0.001), 2)
+        generation_elapsed_ms = round(total_generation_elapsed_ms, 1)
+        tokens_per_second = (
+            round(total_output_tokens / max(generation_elapsed_ms / 1000.0, 0.001), 2)
+            if total_output_tokens > 0 and generation_elapsed_ms > 0
+            else 0.0
+        )
         turn_invalid_events = [event for event in invalid_execution_events if event["turn_id"] == turn_id]
         turn_provider_tokens = usage_total_tokens(turn_provider_usage)
         cumulative_provider_tokens = usage_total_tokens(total_provider_usage)
@@ -1373,6 +1504,7 @@ def run_session_benchmark(
             "metrics": {
                 "ttft_ms": first_response_ms,
                 "turn_elapsed_ms": turn_elapsed_ms,
+                "generation_elapsed_ms": generation_elapsed_ms,
                 "tokens_per_second": tokens_per_second,
                 "context_tokens_estimate": context_estimate,
                 "context_tokens_heuristic": context_counts["heuristic"],
@@ -1402,6 +1534,7 @@ def run_session_benchmark(
                     "turn": turn_num,
                     "ttft_ms": first_response_ms,
                     "latency_ms": turn_elapsed_ms,
+                    "generation_elapsed_ms": generation_elapsed_ms,
                     "tokens_per_second": tokens_per_second,
                     "context_tokens_estimate": context_estimate,
                     "context_window": context_window,

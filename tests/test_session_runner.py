@@ -6,13 +6,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from gnuckle.benchmark import update_usage
 from gnuckle.session_runner import normalize_benchmark_definition, run_session_benchmark
 
 
-def fake_response(content: str = "", tool_calls: list[object] | None = None) -> object:
+def fake_response(content: str = "", tool_calls: list[object] | None = None, usage: dict | None = None) -> object:
     message = SimpleNamespace(content=content, tool_calls=tool_calls or [])
     choice = SimpleNamespace(message=message)
-    usage = {"output_tokens": 5}
+    usage = usage or {"output_tokens": 5}
     return SimpleNamespace(choices=[choice], usage=usage)
 
 
@@ -34,6 +35,21 @@ class FakeOpenAI:
 
 
 class SessionRunnerTests(unittest.TestCase):
+    def test_update_usage_accepts_openai_style_completion_aliases(self) -> None:
+        usage = update_usage(
+            {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+            {"prompt_tokens": 12, "completion_tokens": 34, "total_tokens": 46},
+        )
+        self.assertEqual(usage["input_tokens"], 12)
+        self.assertEqual(usage["output_tokens"], 34)
+        self.assertEqual(usage["total_tokens"], 46)
+
     def test_normalize_v2_turn_shape(self) -> None:
         benchmark = normalize_benchmark_definition(
             {
@@ -177,6 +193,41 @@ class SessionRunnerTests(unittest.TestCase):
         self.assertEqual(len(tool_result_rows), 1)
         self.assertEqual(tool_result_rows[0]["status"], "error")
         self.assertEqual(result["aggregate"]["invalid_execution_count"], 1)
+
+    def test_session_runner_counts_completion_tokens_from_openai_style_usage(self) -> None:
+        benchmark = {
+            "id": "bench",
+            "title": "Bench",
+            "type": "session",
+            "system_prompt": "sys",
+            "tools": ["echo"],
+            "turns": [
+                {
+                    "id": "t01",
+                    "prompt": "Say hi.",
+                    "active_tools": ["echo"],
+                    "expect": {"response_contains": ["hi"], "finish_required": False},
+                }
+            ],
+        }
+
+        FakeOpenAI.responses = [
+            fake_response(content="hi", usage={"prompt_tokens": 9, "completion_tokens": 4, "total_tokens": 13}),
+        ]
+
+        with (
+            patch("gnuckle.session_runner.OpenAI", FakeOpenAI),
+            patch("gnuckle.session_runner.estimate_context_token_counts", return_value={"measured": 40, "heuristic": 40}),
+            patch("gnuckle.session_runner.get_hardware_snapshot", return_value={"vram_peak_mb": 1000}),
+            patch("gnuckle.session_runner.empty_usage", return_value={"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}),
+            patch("gnuckle.session_runner.accumulate_usage", side_effect=lambda total, usage: {key: (total or {}).get(key, 0) + (usage or {}).get(key, 0) for key in ("input_tokens", "output_tokens", "total_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")}),
+            patch("gnuckle.session_runner.usage_total_tokens", side_effect=lambda usage: (usage or {}).get("total_tokens", 0) or ((usage or {}).get("input_tokens", 0) + (usage or {}).get("output_tokens", 0))),
+        ):
+            result = run_session_benchmark(benchmark, base_url="http://localhost:8080/v1")
+
+        metrics = result["turns"][0]["metrics"]
+        self.assertEqual(metrics["provider_usage_total"], 13)
+        self.assertGreaterEqual(metrics["tokens_per_second"], 0.0)
 
     def test_empty_turn_retries_same_query_before_advancing(self) -> None:
         benchmark = {
