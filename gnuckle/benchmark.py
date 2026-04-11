@@ -276,7 +276,12 @@ class HarnessTheaterObserver:
 
     def _render(self) -> None:
         width = _terminal_width()
-        os.system("cls" if os.name == "nt" else "clear")
+        try:
+            print("\x1b[2J\x1b[H", end="")
+        except Exception:
+            pass
+        if not _is_interactive_terminal():
+            os.system("cls" if os.name == "nt" else "clear")
         top = "=" * width
         title = f" SIMULATION | {self.workflow_id} | {self.title} "
         print(top)
@@ -394,7 +399,7 @@ class HarnessTheaterObserver:
 
 
 def make_agentic_observer(show_prompts: str = "summary", style: str = "log"):
-    if style == "theater" and _is_interactive_terminal():
+    if style == "theater":
         return HarnessTheaterObserver(show_prompts=show_prompts)
 
     def observer(event_type: str, payload: dict) -> None:
