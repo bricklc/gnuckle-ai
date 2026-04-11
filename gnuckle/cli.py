@@ -15,6 +15,14 @@ def cmd_benchmark(args):
     """Run the agentic benchmark."""
     from gnuckle.benchmark import run_full_benchmark
 
+    selected_ids = None
+    if args.workflows:
+        selected_ids = [w.strip() for w in args.workflows.split(",") if w.strip()]
+
+    session_ids = None
+    if args.session_bench:
+        session_ids = [s.strip() for s in args.session_bench.split(",") if s.strip()]
+
     run_full_benchmark(
         benchmark_mode=args.mode,
         model_path=args.model,
@@ -30,6 +38,8 @@ def cmd_benchmark(args):
         live_trace=args.live_trace,
         trace_prompts=args.trace_prompts,
         trace_style=args.trace_style,
+        selected_workflow_ids=selected_ids,
+        session_bench_ids=session_ids,
     )
 
 
@@ -74,9 +84,9 @@ def main():
     )
     bench.add_argument(
         "--mode",
-        choices=["legacy", "agentic"],
+        choices=["legacy", "agentic", "session"],
         default=None,
-        help="benchmark mode (default: legacy)",
+        help="benchmark mode: legacy (raw turns), agentic (workflow suite), session (persistent session benchmarks)",
     )
     bench.add_argument(
         "--model",
@@ -141,6 +151,18 @@ def main():
         choices=["fresh_session", "full_history"],
         default=None,
         help="agentic session reuse mode",
+    )
+    bench.add_argument(
+        "--workflows",
+        type=str,
+        default=None,
+        help="comma-separated workflow IDs to run (e.g. 'cb_01_tool_call_validity,cb_02_tool_selection')",
+    )
+    bench.add_argument(
+        "--session-bench",
+        type=str,
+        default=None,
+        help="comma-separated session benchmark IDs (e.g. 'persistent_tool_stress')",
     )
     bench.add_argument(
         "--live-trace",

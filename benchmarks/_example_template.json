@@ -1,0 +1,41 @@
+{
+  "id": "my_benchmark_id",
+  "title": "Human-Readable Benchmark Title",
+  "version": "1.0",
+  "author": "your-name",
+  "description": "What this benchmark tests and why.",
+  "type": "session",
+  "tags": ["tool-use", "your-category"],
+
+  "system_prompt": "You are an AI assistant. Use only the tools provided.",
+
+  "standing_rules": [
+    "Rule the model must follow throughout the session."
+  ],
+
+  "tools": ["echo", "read_file", "write_file", "list_files", "append_file", "get_date", "add_item", "update_item", "read_list", "finish"],
+
+  "turns": [
+    {
+      "id": "t01_descriptive_name",
+      "title": "What this turn tests",
+      "prompt": "The user message sent to the model.",
+      "expect": {
+        "tools_called": ["echo"],
+        "tools_not_called": ["write_file"],
+        "tool_order": ["echo"],
+        "finish_required": true,
+        "response_contains": ["expected", "phrases"],
+        "response_format": "bullet_points",
+        "expect_refusal": false
+      },
+      "mock_results": {
+        "echo": {"output": "deterministic mock output"},
+        "read_file": [
+          {"output": "first call returns this"},
+          {"output": "second call returns this"}
+        ]
+      }
+    }
+  ]
+}

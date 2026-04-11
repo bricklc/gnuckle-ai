@@ -1785,12 +1785,15 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
                                workflow_suite=DEFAULT_WORKFLOW_SUITE, session_mode=DEFAULT_SESSION_MODE,
                                max_turns=None, system_prompt=None, server_pid=None, split_config=None,
                                live_trace: bool = False, trace_prompts: str = "summary",
-                               trace_style: str = "theater"):
+                               trace_style: str = "theater",
+                               selected_workflow_ids=None):
     from gnuckle.agentic_runtime import run_agentic_episode
     from gnuckle.benchmark_scoring import aggregate_workflow_runs, assign_type, finalize_benchmark_summary
     from gnuckle.workflow_loader import load_workflow_suite
 
     workflows = load_workflow_suite(workflow_suite)
+    if selected_workflow_ids is not None:
+        workflows = [wf for wf in workflows if wf.workflow_id in selected_workflow_ids]
     if not workflows:
         raise ValueError(f"workflow suite has no workflows: {workflow_suite}")
     observer = make_agentic_observer(show_prompts=trace_prompts, style=trace_style) if live_trace else None
@@ -2050,12 +2053,180 @@ def _prompt_profile_confirmation(preset, split_config):
     return preset, split_config
 
 
+# ── WORKFLOW SELECTION ───────────────────────────────────────────────────────
+
+def _prompt_workflow_selection(workflow_suite):
+    """Interactive workflow picker. Returns list of selected workflow IDs or None (= run all)."""
+    from gnuckle.workflow_loader import load_workflow_suite
+
+    workflows = load_workflow_suite(workflow_suite)
+    if not workflows:
+        return None
+
+    # Group by benchmark_layer
+    layers = {}
+    for wf in workflows:
+        layers.setdefault(wf.benchmark_layer, []).append(wf)
+
+    layer_order = ["diagnostic", "core", "profile", "diagnostic_variant"]
+    sorted_layers = sorted(layers.keys(), key=lambda l: layer_order.index(l) if l in layer_order else 99)
+
+    # Build flat indexed list
+    indexed = []
+    for layer in sorted_layers:
+        for wf in layers[layer]:
+            indexed.append(wf)
+
+    selected = set(range(len(indexed)))  # all selected by default
+
+    def _render_menu():
+        print()
+        print("  ┌─────────────────────────────────────────────────────────────────────┐")
+        print(f"  │  Workflow Selection ({len(selected)}/{len(indexed)} selected)"
+              f"{' ' * max(0, 37 - len(str(len(selected))) - len(str(len(indexed))))}│")
+        print("  ├─────────────────────────────────────────────────────────────────────┤")
+        current_layer = None
+        for i, wf in enumerate(indexed):
+            if wf.benchmark_layer != current_layer:
+                current_layer = wf.benchmark_layer
+                print(f"  │  [{current_layer}]"
+                      f"{' ' * max(0, 60 - len(current_layer))}│")
+            marker = "x" if i in selected else " "
+            diff = wf.difficulty[0].upper() if wf.difficulty else " "
+            line = f"{i + 1:>3}) [{marker}] {diff} {wf.title}"
+            print(f"  │  {line:<66}│")
+        print("  └─────────────────────────────────────────────────────────────────────┘")
+        print()
+
+    _render_menu()
+
+    print("  Commands: number to toggle, 'all', 'none', layer name (e.g. 'core'),")
+    print("           range (e.g. '3-7'), 'go' or Enter to proceed")
+    print()
+
+    while True:
+        raw = input("  >> ").strip().lower()
+        if raw in ("", "go", "g", "y"):
+            break
+
+        if raw == "all":
+            selected = set(range(len(indexed)))
+            _render_menu()
+            continue
+        if raw == "none":
+            selected.clear()
+            _render_menu()
+            continue
+
+        # Toggle by layer name
+        matched_layer = False
+        for layer in sorted_layers:
+            if raw == layer or raw == layer.replace("_", " ") or raw == layer.replace("_", "-"):
+                layer_indices = [i for i, wf in enumerate(indexed) if wf.benchmark_layer == layer]
+                if all(i in selected for i in layer_indices):
+                    selected -= set(layer_indices)
+                else:
+                    selected |= set(layer_indices)
+                matched_layer = True
+                break
+        if matched_layer:
+            _render_menu()
+            continue
+
+        # Range (e.g. "3-7")
+        if "-" in raw:
+            parts = raw.split("-", 1)
+            try:
+                start, end = int(parts[0]) - 1, int(parts[1]) - 1
+                rng = set(range(start, end + 1)) & set(range(len(indexed)))
+                if all(i in selected for i in rng):
+                    selected -= rng
+                else:
+                    selected |= rng
+                _render_menu()
+                continue
+            except ValueError:
+                pass
+
+        # Single number or comma-separated
+        nums = [n.strip() for n in raw.split(",")]
+        toggled = False
+        for n in nums:
+            try:
+                idx = int(n) - 1
+                if 0 <= idx < len(indexed):
+                    if idx in selected:
+                        selected.discard(idx)
+                    else:
+                        selected.add(idx)
+                    toggled = True
+            except ValueError:
+                pass
+        if toggled:
+            _render_menu()
+        else:
+            print("  unrecognized input. try a number, range, layer name, 'all', 'none', or 'go'.")
+
+    if not selected:
+        print("  no workflows selected. ape confused. running all.")
+        return None
+
+    if len(selected) == len(indexed):
+        return None  # all selected, no filter needed
+
+    return [indexed[i].workflow_id for i in sorted(selected)]
+
+
+def _prompt_session_benchmark_selection() -> list[dict]:
+    """Interactive session benchmark picker. Returns list of selected benchmark dicts."""
+    from gnuckle.session_runner import discover_benchmarks
+
+    benchmarks = discover_benchmarks()
+    if not benchmarks:
+        return []
+
+    print()
+    print("  ┌─────────────────────────────────────────────────────────────────────┐")
+    print(f"  │  Session Benchmarks ({len(benchmarks)} available)"
+          f"{' ' * max(0, 43 - len(str(len(benchmarks))))}│")
+    print("  ├─────────────────────────────────────────────────────────────────────┤")
+    for i, bench in enumerate(benchmarks):
+        tags = ", ".join(bench.get("tags", [])[:3])
+        turns = len(bench.get("turns", []))
+        line = f"{i + 1:>3}) {bench['title']} ({turns}t) [{tags}]"
+        print(f"  │  {line:<66}│")
+        desc = bench.get("description", "")
+        if desc:
+            truncated = (desc[:63] + "...") if len(desc) > 66 else desc
+            print(f"  │       {truncated:<62}│")
+    print("  └─────────────────────────────────────────────────────────────────────┘")
+    print()
+    print("  Enter numbers to select (comma-separated), 'all', or Enter to skip:")
+
+    raw = input("  >> ").strip().lower()
+    if not raw:
+        return []
+    if raw == "all":
+        return benchmarks
+
+    selected = []
+    for n in raw.split(","):
+        try:
+            idx = int(n.strip()) - 1
+            if 0 <= idx < len(benchmarks):
+                selected.append(benchmarks[idx])
+        except ValueError:
+            pass
+    return selected
+
+
 # ── FULL BENCHMARK ORCHESTRATOR ──────────────────────────────────────────────
 def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, scan_dir=None,
                        output_dir=None, num_turns=None, port=None, profile_path=None,
                        workflow_suite=None, session_mode=None, use_jinja=True,
                        live_trace: bool = False, trace_prompts: str = "summary",
-                       trace_style: str = "theater"):
+                       trace_style: str = "theater",
+                       selected_workflow_ids=None, session_bench_ids=None):
     profile = {}
     if profile_path:
         profile = load_profile(profile_path)
@@ -2146,6 +2317,23 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
     if _is_interactive_terminal():
         preset, split_config = _prompt_profile_confirmation(preset, split_config)
 
+    # Workflow selection (agentic mode only)
+    if selected_workflow_ids is None and benchmark_mode == "agentic" and _is_interactive_terminal():
+        selected_workflow_ids = _prompt_workflow_selection(workflow_suite)
+
+    # Session benchmark selection
+    selected_session_benchmarks = []
+    if session_bench_ids is not None:
+        from gnuckle.session_runner import load_benchmark
+        for bid in session_bench_ids:
+            selected_session_benchmarks.append(load_benchmark(bid))
+    elif benchmark_mode in ("agentic", "session") and _is_interactive_terminal():
+        selected_session_benchmarks = _prompt_session_benchmark_selection()
+
+    if benchmark_mode == "session" and not selected_session_benchmarks:
+        print("  no session benchmarks selected. nothing to run.")
+        return
+
     output_files = []
     server_proc  = None
     benchmark_started = time.perf_counter()
@@ -2200,7 +2388,53 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                         live_trace=live_trace,
                         trace_prompts=trace_prompts,
                         trace_style=trace_style,
+                        selected_workflow_ids=selected_workflow_ids,
                     )
+
+                    # Run selected session benchmarks after workflow pass
+                    if selected_session_benchmarks:
+                        from gnuckle.session_runner import run_session_benchmark
+                        base_url = DEFAULT_BASE_URL.format(port=port)
+                        for bench in selected_session_benchmarks:
+                            try:
+                                session_out = run_session_benchmark(
+                                    bench,
+                                    base_url=base_url,
+                                    request_args=preset.get("request_args", {}),
+                                    output_dir=output_path,
+                                    server_pid=getattr(server_proc, "pid", None),
+                                    context_window=get_context_window(preset),
+                                )
+                                # Save with cache label
+                                session_path = output_path / f"session_{bench['id']}_{sanitize_label(label)}.json"
+                                session_out["meta"]["cache_label"] = label
+                                session_path.write_text(json.dumps(session_out, indent=2, default=str), encoding="utf-8")
+                                print_step(f"session benchmark saved: {session_path.name}")
+                            except Exception as se:
+                                print(f"  ERROR during session benchmark [{bench['id']}]: {se}")
+                                ape_print("error")
+                elif benchmark_mode == "session":
+                    # Session-only mode — no workflow pass, just session benchmarks
+                    from gnuckle.session_runner import run_session_benchmark
+                    base_url = DEFAULT_BASE_URL.format(port=port)
+                    for bench in selected_session_benchmarks:
+                        try:
+                            session_out = run_session_benchmark(
+                                bench,
+                                base_url=base_url,
+                                request_args=preset.get("request_args", {}),
+                                output_dir=output_path,
+                                server_pid=getattr(server_proc, "pid", None),
+                                context_window=get_context_window(preset),
+                            )
+                            session_out["meta"]["cache_label"] = label
+                            session_path = output_path / f"session_{bench['id']}_{sanitize_label(label)}.json"
+                            session_path.write_text(json.dumps(session_out, indent=2, default=str), encoding="utf-8")
+                            out = session_path
+                            print_step(f"session benchmark saved: {session_path.name}")
+                        except Exception as se:
+                            print(f"  ERROR during session benchmark [{bench['id']}]: {se}")
+                            ape_print("error")
                 else:
                     out = run_benchmark_pass(
                         label,

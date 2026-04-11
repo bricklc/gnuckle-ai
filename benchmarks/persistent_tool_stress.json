@@ -1,0 +1,269 @@
+{
+  "id": "persistent_tool_stress",
+  "title": "Persistent Tool Stress Test",
+  "version": "1.0",
+  "author": "gnuckle-ai",
+  "description": "Tests tool retention, selection accuracy, and performance under growing context pressure in a single persistent session.",
+  "type": "session",
+  "tags": ["tool-use", "stress", "context-pressure", "retention"],
+
+  "system_prompt": "You are Gnuckle, a bounded benchmark agent. You have access to the tools listed below. Use only the tools provided. Follow all standing rules. When a task is complete, call the finish tool with a summary.",
+
+  "standing_rules": [
+    "Always respond in bullet points when summarizing.",
+    "Never call a tool that was not provided to you.",
+    "When asked to read a file, report its contents exactly."
+  ],
+
+  "tools": ["echo", "read_file", "write_file", "list_files", "append_file", "get_date", "add_item", "update_item", "read_list", "finish"],
+
+  "turns": [
+    {
+      "id": "t01_single_echo",
+      "title": "Single tool call (echo)",
+      "prompt": "Use the echo tool to repeat the phrase: benchmark session started.",
+      "expect": {
+        "tools_called": ["echo"],
+        "tools_not_called": ["write_file", "read_file", "list_files"],
+        "finish_required": true,
+        "response_contains": ["benchmark session started"]
+      },
+      "mock_results": {
+        "echo": {"output": "benchmark session started"}
+      }
+    },
+    {
+      "id": "t02_single_read",
+      "title": "Single tool call (read_file)",
+      "prompt": "Read the file notes.txt and tell me what it says.",
+      "expect": {
+        "tools_called": ["read_file"],
+        "tools_not_called": ["write_file", "echo"],
+        "finish_required": true,
+        "response_contains": ["meeting at 3pm", "bring laptop"]
+      },
+      "mock_results": {
+        "read_file": {"output": "Reminder: meeting at 3pm. Bring laptop and charger."}
+      }
+    },
+    {
+      "id": "t03_two_tool_sequence",
+      "title": "Two-tool sequence (list then read)",
+      "prompt": "List the files in the workspace, then read the first one you find.",
+      "expect": {
+        "tools_called": ["list_files", "read_file"],
+        "tool_order": ["list_files", "read_file"],
+        "finish_required": true
+      },
+      "mock_results": {
+        "list_files": {"output": "notes.txt\ntodo.txt\nconfig.json"},
+        "read_file": {"output": "First file contents: project kickoff scheduled for Monday."}
+      }
+    },
+    {
+      "id": "t04_write_then_verify",
+      "title": "Write then read-back verification",
+      "prompt": "Write 'hello world' to output.txt, then read it back to confirm.",
+      "expect": {
+        "tools_called": ["write_file", "read_file"],
+        "tool_order": ["write_file", "read_file"],
+        "finish_required": true,
+        "response_contains": ["hello world"]
+      },
+      "mock_results": {
+        "write_file": {"output": "ok: wrote 11 bytes to output.txt"},
+        "read_file": {"output": "hello world"}
+      }
+    },
+    {
+      "id": "t05_three_tool_chain",
+      "title": "Three-tool chain (list, read, write)",
+      "prompt": "List the workspace files, read todo.txt, then write a summary of it to summary.txt.",
+      "expect": {
+        "tools_called": ["list_files", "read_file", "write_file"],
+        "tool_order": ["list_files", "read_file", "write_file"],
+        "finish_required": true
+      },
+      "mock_results": {
+        "list_files": {"output": "notes.txt\ntodo.txt\nconfig.json\noutput.txt"},
+        "read_file": {"output": "TODO:\n- Fix login bug\n- Deploy staging\n- Write tests for auth module"},
+        "write_file": {"output": "ok: wrote 89 bytes to summary.txt"}
+      }
+    },
+    {
+      "id": "t06_delayed_reuse",
+      "title": "Delayed reuse of echo (last used turn 1)",
+      "prompt": "Use the echo tool to repeat: context pressure checkpoint.",
+      "expect": {
+        "tools_called": ["echo"],
+        "tools_not_called": ["write_file", "read_file"],
+        "finish_required": true,
+        "response_contains": ["context pressure checkpoint"]
+      },
+      "mock_results": {
+        "echo": {"output": "context pressure checkpoint"}
+      }
+    },
+    {
+      "id": "t07_distractor_resistance",
+      "title": "Distractor resistance (only read_file needed)",
+      "prompt": "Read config.json. Do not modify anything.",
+      "expect": {
+        "tools_called": ["read_file"],
+        "tools_not_called": ["write_file", "append_file", "echo", "add_item"],
+        "finish_required": true,
+        "response_contains": ["port", "8080"]
+      },
+      "mock_results": {
+        "read_file": {"output": "{\"port\": 8080, \"host\": \"0.0.0.0\", \"debug\": false}"}
+      }
+    },
+    {
+      "id": "t08_standing_rule_check",
+      "title": "Standing rule retention (bullet point format)",
+      "prompt": "Summarize everything you have done so far in this session.",
+      "expect": {
+        "finish_required": true,
+        "response_format": "bullet_points"
+      },
+      "mock_results": {}
+    },
+    {
+      "id": "t09_list_state_sequence",
+      "title": "Stateful list operations (add, read, update)",
+      "prompt": "Add 'buy milk' to the list, then read the list, then update that item to 'buy 2 liters of oat milk'.",
+      "expect": {
+        "tools_called": ["add_item", "read_list", "update_item"],
+        "tool_order": ["add_item", "read_list", "update_item"],
+        "finish_required": true
+      },
+      "mock_results": {
+        "add_item": {"output": "added item 1: buy milk"},
+        "read_list": {"output": "[{\"id\": 1, \"text\": \"buy milk\"}]"},
+        "update_item": {"output": "updated item 1: buy 2 liters of oat milk"}
+      }
+    },
+    {
+      "id": "t10_date_tool_isolation",
+      "title": "Date tool with no side effects",
+      "prompt": "What is today's date?",
+      "expect": {
+        "tools_called": ["get_date"],
+        "tools_not_called": ["read_file", "write_file", "list_files"],
+        "finish_required": true
+      },
+      "mock_results": {
+        "get_date": {"output": "2026-04-10 (Thursday)"}
+      }
+    },
+    {
+      "id": "t11_four_tool_chain",
+      "title": "Four-tool chain under pressure",
+      "prompt": "Get today's date, list all files, read notes.txt, and append today's date to notes.txt.",
+      "expect": {
+        "tools_called": ["get_date", "list_files", "read_file", "append_file"],
+        "tool_order": ["get_date", "list_files", "read_file", "append_file"],
+        "finish_required": true
+      },
+      "mock_results": {
+        "get_date": {"output": "2026-04-10 (Thursday)"},
+        "list_files": {"output": "notes.txt\ntodo.txt\nconfig.json\noutput.txt\nsummary.txt"},
+        "read_file": {"output": "Reminder: meeting at 3pm. Bring laptop and charger."},
+        "append_file": {"output": "ok: appended 25 bytes to notes.txt"}
+      }
+    },
+    {
+      "id": "t12_rule_retention_deep",
+      "title": "Rule retention after 11 turns of context",
+      "prompt": "Read todo.txt and summarize the tasks.",
+      "expect": {
+        "tools_called": ["read_file"],
+        "finish_required": true,
+        "response_format": "bullet_points",
+        "response_contains": ["login bug", "staging", "auth"]
+      },
+      "mock_results": {
+        "read_file": {"output": "TODO:\n- Fix login bug\n- Deploy staging\n- Write tests for auth module"}
+      }
+    },
+    {
+      "id": "t13_write_chain_correctness",
+      "title": "Write chain correctness (read, transform, write)",
+      "prompt": "Read config.json, change the port to 9090, and write it back.",
+      "expect": {
+        "tools_called": ["read_file", "write_file"],
+        "tool_order": ["read_file", "write_file"],
+        "finish_required": true
+      },
+      "mock_results": {
+        "read_file": {"output": "{\"port\": 8080, \"host\": \"0.0.0.0\", \"debug\": false}"},
+        "write_file": {"output": "ok: wrote 52 bytes to config.json"}
+      }
+    },
+    {
+      "id": "t14_refused_hallucination",
+      "title": "Refuse hallucinated tool (send_email does not exist)",
+      "prompt": "Send an email to my team about the deployment.",
+      "expect": {
+        "tools_not_called": ["send_email"],
+        "finish_required": true,
+        "expect_refusal": true
+      },
+      "mock_results": {}
+    },
+    {
+      "id": "t15_five_tool_chain",
+      "title": "Five-tool chain (maximum pressure)",
+      "prompt": "Get today's date, list files, read todo.txt, write a dated status report to status.txt, then read it back to confirm.",
+      "expect": {
+        "tools_called": ["get_date", "list_files", "read_file", "write_file", "read_file"],
+        "tool_order": ["get_date", "list_files", "read_file", "write_file", "read_file"],
+        "finish_required": true
+      },
+      "mock_results": {
+        "get_date": {"output": "2026-04-10 (Thursday)"},
+        "list_files": {"output": "notes.txt\ntodo.txt\nconfig.json\noutput.txt\nsummary.txt\nstatus.txt"},
+        "read_file": [
+          {"output": "TODO:\n- Fix login bug\n- Deploy staging\n- Write tests for auth module"},
+          {"output": "Status Report 2026-04-10:\n- Login bug: in progress\n- Staging: pending\n- Auth tests: not started"}
+        ],
+        "write_file": {"output": "ok: wrote 112 bytes to status.txt"}
+      }
+    },
+    {
+      "id": "t16_echo_after_heavy_context",
+      "title": "Simple echo after 15 turns of context",
+      "prompt": "Echo the phrase: still operational.",
+      "expect": {
+        "tools_called": ["echo"],
+        "tools_not_called": ["read_file", "write_file", "list_files"],
+        "finish_required": true,
+        "response_contains": ["still operational"]
+      },
+      "mock_results": {
+        "echo": {"output": "still operational"}
+      }
+    },
+    {
+      "id": "t17_full_session_recall",
+      "title": "Session memory recall under full context load",
+      "prompt": "Without using any file tools, tell me: what was the port number in config.json, and what were the three TODO items?",
+      "expect": {
+        "tools_not_called": ["read_file", "list_files", "write_file"],
+        "finish_required": true,
+        "response_contains": ["8080", "login bug", "staging", "auth"]
+      },
+      "mock_results": {}
+    },
+    {
+      "id": "t18_final_standing_rules",
+      "title": "Final standing rule adherence check",
+      "prompt": "Summarize every tool you used in this entire session, in order.",
+      "expect": {
+        "finish_required": true,
+        "response_format": "bullet_points"
+      },
+      "mock_results": {}
+    }
+  ]
+}
