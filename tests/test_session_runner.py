@@ -325,6 +325,91 @@ class SessionRunnerTests(unittest.TestCase):
         self.assertEqual(result["aggregate"]["heading_violation_turn_count"], 1)
         self.assertIn("turn_receipts", result["llm_audit_receipt"])
 
+    def test_must_inspect_turn_marks_unsupported_claims(self) -> None:
+        benchmark = {
+            "id": "bench",
+            "title": "Bench",
+            "type": "session",
+            "system_prompt": "sys",
+            "tools": ["read_file"],
+            "turns": [
+                {
+                    "id": "t01",
+                    "prompt": "What is in handoff.md?",
+                    "active_tools": ["read_file"],
+                    "expect": {
+                        "tools_called": ["read_file"],
+                        "evidence_mode": "must_inspect",
+                        "scoring_mode": "strict_grounded",
+                        "response_contains": ["Fix login bug"],
+                        "finish_required": False,
+                    },
+                }
+            ],
+        }
+
+        FakeOpenAI.responses = [
+            fake_response(content="- Fix login bug"),
+        ]
+
+        with (
+            patch("gnuckle.session_runner.OpenAI", FakeOpenAI),
+            patch("gnuckle.session_runner.estimate_context_token_counts", return_value={"measured": 40, "heuristic": 40}),
+            patch("gnuckle.session_runner.get_hardware_snapshot", return_value={"vram_peak_mb": 1000}),
+            patch("gnuckle.session_runner.empty_usage", return_value={"output_tokens": 0}),
+            patch("gnuckle.session_runner.update_usage", side_effect=lambda current, usage: usage or {"output_tokens": 0}),
+            patch("gnuckle.session_runner.accumulate_usage", side_effect=lambda total, usage: {"output_tokens": (total or {}).get("output_tokens", 0) + (usage or {}).get("output_tokens", 0)}),
+            patch("gnuckle.session_runner.usage_total_tokens", side_effect=lambda usage: (usage or {}).get("output_tokens", 0)),
+        ):
+            result = run_session_benchmark(benchmark, base_url="http://localhost:8080/v1")
+
+        scores = result["turns"][0]["scores"]
+        self.assertEqual(scores["unsupported_claim_count"], 1)
+        self.assertIn("Used memory instead of inspecting current state.", scores["score_notes"])
+
+    def test_memory_only_turn_penalizes_tool_use(self) -> None:
+        benchmark = {
+            "id": "bench",
+            "title": "Bench",
+            "type": "session",
+            "system_prompt": "sys",
+            "tools": ["read_file"],
+            "turns": [
+                {
+                    "id": "t01",
+                    "prompt": "Recall from memory.",
+                    "active_tools": ["read_file"],
+                    "expect": {
+                        "tools_called": [],
+                        "tools_not_called": ["read_file"],
+                        "evidence_mode": "memory_only",
+                        "scoring_mode": "semantic_recall",
+                        "response_contains": ["8080"],
+                        "finish_required": False,
+                    },
+                }
+            ],
+        }
+
+        FakeOpenAI.responses = [
+            fake_response(tool_calls=[fake_tool_call("tc1", "read_file", '{"path":"config.json"}')]),
+            fake_response(content="- 8080"),
+        ]
+
+        with (
+            patch("gnuckle.session_runner.OpenAI", FakeOpenAI),
+            patch("gnuckle.session_runner.estimate_context_token_counts", return_value={"measured": 40, "heuristic": 40}),
+            patch("gnuckle.session_runner.get_hardware_snapshot", return_value={"vram_peak_mb": 1000}),
+            patch("gnuckle.session_runner.empty_usage", return_value={"output_tokens": 0}),
+            patch("gnuckle.session_runner.update_usage", side_effect=lambda current, usage: usage or {"output_tokens": 0}),
+            patch("gnuckle.session_runner.accumulate_usage", side_effect=lambda total, usage: {"output_tokens": (total or {}).get("output_tokens", 0) + (usage or {}).get("output_tokens", 0)}),
+            patch("gnuckle.session_runner.usage_total_tokens", side_effect=lambda usage: (usage or {}).get("output_tokens", 0)),
+        ):
+            result = run_session_benchmark(benchmark, base_url="http://localhost:8080/v1")
+
+        self.assertEqual(result["aggregate"]["memory_only_tool_violation_turn_count"], 1)
+        self.assertIn("Used tools on a memory-only turn.", result["turns"][0]["scores"]["score_notes"])
+
 
 if __name__ == "__main__":
     unittest.main()

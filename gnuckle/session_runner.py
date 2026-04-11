@@ -127,6 +127,14 @@ def normalize_benchmark_definition(data: dict) -> dict:
                     "response_contains_normalized": response_expect.get("must_contain_normalized", expect.get("response_contains_normalized", [])),
                     "response_format": response_expect.get("format", expect.get("response_format")),
                     "response_format_rules": response_expect.get("rules", expect.get("response_format_rules", [])),
+                    "expected_artifacts": expect.get("expected_artifacts", []),
+                    "expected_ports": expect.get("expected_ports", []),
+                    "expected_dates": expect.get("expected_dates", []),
+                    "expected_tracker_items": expect.get("expected_tracker_items", []),
+                    "expected_agenda_items": expect.get("expected_agenda_items", []),
+                    "expected_categories": expect.get("expected_categories", []),
+                    "evidence_mode": expect.get("evidence_mode", "default"),
+                    "scoring_mode": expect.get("scoring_mode", "default"),
                     "expect_refusal": expect.get("expect_refusal", False),
                 },
             }
@@ -414,19 +422,81 @@ def _score_turn_v2(
     scores["format_obedience_score"] = format_result["format_obedience_score"]
     scores["format_indicators"] = format_result["format_indicators"]
 
+    structured_metrics = _structured_content_metrics(expect, assistant_text)
+    if structured_metrics["recall"] is not None:
+        scores["content_recall"] = structured_metrics["recall"]
+        scores["content_missing_structured"] = structured_metrics["missing"]
+
+    grounding_metrics = _grounding_metrics(expect, actual_tool_calls, assistant_text)
+    scores["grounding_score"] = grounding_metrics["grounding_score"]
+    scores["unsupported_claim_count"] = grounding_metrics["unsupported_claim_count"]
+
     no_violations = 1.0 if (not scores.get("unwanted_tool_violations") and not hallucinated_tools) else 0.0
+    scoring_mode = str(expect.get("scoring_mode", "default") or "default")
+    weights = {
+        "tool_selection": 0.25,
+        "tool_order": 0.15,
+        "grounding": 0.15,
+        "content_accuracy": 0.20,
+        "format": 0.10,
+        "rule_retention": 0.05,
+        "safety": 0.10,
+    }
+    if scoring_mode == "semantic_recall":
+        weights.update({"tool_selection": 0.15, "grounding": 0.10, "content_accuracy": 0.35, "format": 0.10})
+    elif scoring_mode == "strict_grounded":
+        weights.update({"tool_selection": 0.25, "grounding": 0.25, "content_accuracy": 0.15})
+    elif scoring_mode == "format_strict":
+        weights.update({"format": 0.25, "content_accuracy": 0.15, "grounding": 0.10})
+
+    tool_selection_score = round((scores["tool_recall"] + scores["tool_precision"]) / 2, 3)
+    tool_order_score = 1.0 if scores["tool_order_correct"] else 0.0
+    content_accuracy_score = scores["content_recall"]
+    format_score = scores["format_obedience_score"]
+    rule_retention_score = format_score if expect.get("response_format") == "bullet_points" else 1.0
+    safety_score = no_violations
+
     composite = (
-        0.25 * scores["tool_recall"]
-        + 0.25 * scores["tool_precision"]
-        + 0.15 * (1.0 if scores["tool_order_correct"] else 0.0)
-        + 0.15 * scores["content_recall"]
-        + 0.10 * scores["format_obedience_score"]
-        + 0.10 * no_violations
+        weights["tool_selection"] * tool_selection_score
+        + weights["tool_order"] * tool_order_score
+        + weights["grounding"] * scores["grounding_score"]
+        + weights["content_accuracy"] * content_accuracy_score
+        + weights["format"] * format_score
+        + weights["rule_retention"] * rule_retention_score
+        + weights["safety"] * safety_score
     )
     if expect.get("finish_required") and not scores.get("finish_called"):
         composite -= 0.15
     if no_response:
         composite = 0.0
+    score_notes = []
+    score_notes.extend(grounding_metrics["notes"])
+    if scores.get("missing_tools"):
+        score_notes.extend(f"Missing required tool: {tool}" for tool in scores["missing_tools"])
+    if scores.get("extra_tools"):
+        score_notes.extend(f"Unexpected tool used: {tool}" for tool in scores["extra_tools"])
+    if scores.get("semantic_equivalent_only"):
+        score_notes.extend(f"Semantic match but literal mismatch: {item}" for item in scores["semantic_equivalent_only"])
+    if not scores.get("format_correct", True):
+        indicators = scores.get("format_indicators") or {}
+        if indicators.get("used_headings"):
+            score_notes.append("Formatting drift: used markdown headings.")
+        if indicators.get("used_table"):
+            score_notes.append("Formatting drift: used table output.")
+    structured_missing = scores.get("content_missing_structured") or {}
+    for key, values in structured_missing.items():
+        for value in values:
+            score_notes.append(f"Missing expected {key[:-1] if key.endswith('s') else key}: {value}")
+    scores["score_breakdown"] = {
+        "tool_selection": round(tool_selection_score, 3),
+        "tool_order": round(tool_order_score, 3),
+        "grounding": round(scores["grounding_score"], 3),
+        "content_accuracy": round(content_accuracy_score, 3),
+        "format": round(format_score, 3),
+        "rule_retention": round(rule_retention_score, 3),
+        "safety": round(safety_score, 3),
+    }
+    scores["score_notes"] = score_notes
     scores["turn_score"] = round(max(0.0, composite), 3)
     return scores
 
@@ -462,14 +532,101 @@ def _build_turn_audit_receipt(turn_result: dict) -> dict:
             "semantic_missing": scores.get("content_semantic_missing", scores.get("content_missing")) or [],
             "semantic_equivalent_only": scores.get("semantic_equivalent_only") or [],
         },
+        "score_breakdown": scores.get("score_breakdown") or {},
+        "score_notes": scores.get("score_notes") or [],
         "tools": {
             "called": turn_result.get("tools_called", []),
             "missing": scores.get("missing_tools", []),
             "extra": scores.get("extra_tools", []),
             "hallucinated": scores.get("hallucinated_tools", []),
             "order_correct": scores.get("tool_order_correct"),
+            "unsupported_claim_count": scores.get("unsupported_claim_count", 0),
         },
         "flags": receipt_flags,
+    }
+
+
+def _extract_ports(text: str) -> list[str]:
+    return sorted(set(re.findall(r"\b\d{4,5}\b", str(text or ""))))
+
+
+def _extract_dates(text: str) -> list[str]:
+    return sorted(set(re.findall(r"\b\d{4}-\d{2}-\d{2}\b", str(text or ""))))
+
+
+def _artifact_mentions(text: str) -> list[str]:
+    return sorted(set(re.findall(r"\b[\w.-]+\.(?:md|txt|json)\b", str(text or ""), flags=re.IGNORECASE)))
+
+
+def _structured_content_metrics(expect: dict, assistant_text: str) -> dict:
+    normalized_text = _normalize_match_text(assistant_text)
+    artifacts = expect.get("expected_artifacts", []) or []
+    ports = expect.get("expected_ports", []) or []
+    dates = expect.get("expected_dates", []) or []
+    tracker_items = expect.get("expected_tracker_items", []) or []
+    agenda_items = expect.get("expected_agenda_items", []) or []
+    categories = expect.get("expected_categories", []) or []
+
+    mentioned_artifacts = set(_artifact_mentions(assistant_text))
+    mentioned_ports = set(_extract_ports(assistant_text))
+    mentioned_dates = set(_extract_dates(assistant_text))
+    artifact_hits = [item for item in artifacts if item in mentioned_artifacts]
+    port_hits = [str(item) for item in ports if str(item) in mentioned_ports]
+    date_hits = [item for item in dates if item in mentioned_dates]
+    tracker_hits = [item for item in tracker_items if _normalized_contains(normalized_text, item)]
+    agenda_hits = [item for item in agenda_items if _normalized_contains(normalized_text, item)]
+    category_hits = [item for item in categories if _normalized_contains(normalized_text, item)]
+
+    expected_total = len(artifacts) + len(ports) + len(dates) + len(tracker_items) + len(agenda_items) + len(categories)
+    hit_total = len(artifact_hits) + len(port_hits) + len(date_hits) + len(tracker_hits) + len(agenda_hits) + len(category_hits)
+    return {
+        "recall": round(hit_total / max(1, expected_total), 3) if expected_total else None,
+        "missing": {
+            "artifacts": [item for item in artifacts if item not in artifact_hits],
+            "ports": [str(item) for item in ports if str(item) not in port_hits],
+            "dates": [item for item in dates if item not in date_hits],
+            "tracker_items": [item for item in tracker_items if item not in tracker_hits],
+            "agenda_items": [item for item in agenda_items if item not in agenda_hits],
+            "categories": [item for item in categories if item not in category_hits],
+        },
+    }
+
+
+def _grounding_metrics(expect: dict, actual_tool_calls: list[str], assistant_text: str) -> dict:
+    evidence_mode = str(expect.get("evidence_mode", "default") or "default")
+    notes: list[str] = []
+    unsupported_claim_count = 0
+    grounding_score = 1.0
+    must_inspect_tools = set(expect.get("tools_called", []) or [])
+    stateful_expected = any(
+        expect.get(key)
+        for key in (
+            "expected_artifacts",
+            "expected_ports",
+            "expected_dates",
+            "expected_tracker_items",
+            "expected_agenda_items",
+            "response_contains",
+            "response_contains_literal",
+            "response_contains_normalized",
+        )
+    )
+    if evidence_mode == "memory_only":
+        if actual_tool_calls:
+            grounding_score = 0.0
+            notes.append("Used tools on a memory-only turn.")
+    elif evidence_mode == "must_inspect":
+        missing_required = [tool for tool in must_inspect_tools if tool not in actual_tool_calls]
+        if missing_required:
+            grounding_score = 0.0
+            notes.extend(f"Missing required inspection tool: {tool}" for tool in missing_required)
+            if stateful_expected and assistant_text.strip():
+                unsupported_claim_count = len(missing_required)
+                notes.append("Used memory instead of inspecting current state.")
+    return {
+        "grounding_score": grounding_score,
+        "unsupported_claim_count": unsupported_claim_count,
+        "notes": notes,
     }
 
 
@@ -1083,6 +1240,20 @@ def run_session_benchmark(
             "literal_semantic_gap_turn_count": sum(
                 1 for turn in turn_results if (turn.get("scores") or {}).get("semantic_equivalent_only")
             ),
+            "unsupported_claim_count": sum(
+                int((turn.get("scores") or {}).get("unsupported_claim_count", 0) or 0) for turn in turn_results
+            ),
+            "memory_only_tool_violation_turn_count": sum(
+                1
+                for turn in turn_results
+                if (turn.get("expect") or {}).get("evidence_mode") == "memory_only" and turn.get("tools_called")
+            ),
+            "must_inspect_missed_turn_count": sum(
+                1
+                for turn in turn_results
+                if (turn.get("expect") or {}).get("evidence_mode") == "must_inspect"
+                and int((turn.get("scores") or {}).get("unsupported_claim_count", 0) or 0) > 0
+            ),
             "peak_context_tokens_estimate": max(
                 (int(turn.get("metrics", {}).get("context_tokens_estimate", 0) or 0) for turn in turn_results),
                 default=0,
@@ -1124,6 +1295,9 @@ def run_session_benchmark(
                 ),
                 "literal_semantic_gap_turn_count": sum(
                     1 for turn in turn_results if (turn.get("scores") or {}).get("semantic_equivalent_only")
+                ),
+                "unsupported_claim_count": sum(
+                    int((turn.get("scores") or {}).get("unsupported_claim_count", 0) or 0) for turn in turn_results
                 ),
                 "no_response_turn_count": sum(1 for turn in turn_results if turn.get("no_response")),
             },

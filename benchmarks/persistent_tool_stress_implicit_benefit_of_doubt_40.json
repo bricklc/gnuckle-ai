@@ -400,6 +400,8 @@
         "tools_not_called": ["write_file", "list_files", "append_file"],
         "tool_order": ["read_file"],
         "finish_required": false,
+        "evidence_mode": "must_inspect",
+        "scoring_mode": "strict_grounded",
         "response_contains": ["Fix login bug", "Deploy staging", "Write tests for auth module", "risks"],
         "response_format": "bullet_points"
       }
@@ -425,6 +427,8 @@
         "tools_called": [],
         "tools_not_called": ["read_file", "read_list", "write_file"],
         "finish_required": false,
+        "evidence_mode": "memory_only",
+        "scoring_mode": "semantic_recall",
         "response_contains": ["9090", "buy 2 liters of oat milk", "book dentist appointment for next Wednesday", "ship release notes"],
         "response_format": "bullet_points"
       }
@@ -439,6 +443,11 @@
         "tools_not_called": ["write_file", "list_files"],
         "tool_order": ["get_date", "read_file", "append_file", "read_file"],
         "finish_required": false,
+        "evidence_mode": "must_inspect",
+        "scoring_mode": "strict_grounded",
+        "expected_artifacts": ["daily_log.txt"],
+        "expected_ports": ["9090"],
+        "expected_dates": ["2026-04-12"],
         "response_contains": ["daily_log.txt", "2026-04-12", "9090"]
       },
       "mock_results": {
@@ -455,6 +464,10 @@
         "tools_not_called": ["append_file", "list_files"],
         "tool_order": ["get_date", "read_file", "read_list", "write_file"],
         "finish_required": false,
+        "evidence_mode": "must_inspect",
+        "scoring_mode": "strict_grounded",
+        "expected_artifacts": ["status.md"],
+        "expected_ports": ["9090"],
         "response_contains": ["status.md", "9090"]
       },
       "mock_results": {
@@ -470,6 +483,9 @@
         "tools_called": [],
         "tools_not_called": ["read_file", "write_file", "list_files", "get_date", "read_list"],
         "finish_required": false,
+        "evidence_mode": "memory_only",
+        "scoring_mode": "semantic_recall",
+        "expected_agenda_items": ["9am review todo", "11am config check", "2pm deploy staging", "4pm journal update"],
         "response_contains_normalized": ["9am review todo", "11am config check", "2pm deploy staging", "4pm journal update"],
         "response_format": "bullet_points",
         "response_format_rules": ["no_headings", "no_tables", "flat_bullets"]
@@ -536,6 +552,10 @@
         "tools_called": [],
         "tools_not_called": ["read_file", "read_list", "write_file", "get_date"],
         "finish_required": false,
+        "evidence_mode": "memory_only",
+        "scoring_mode": "semantic_recall",
+        "expected_agenda_items": ["9am review todo", "11am config check", "2pm deploy staging", "4pm journal update"],
+        "expected_tracker_items": ["buy 2 liters of oat milk", "ship release notes draft", "archive benchmark artifacts"],
         "response_contains": ["9am review todo", "11am config check", "2pm deploy staging", "4pm journal update", "buy 2 liters of oat milk", "ship release notes draft", "archive benchmark artifacts"],
         "response_format": "bullet_points"
       }
@@ -549,6 +569,9 @@
         "tools_called": [],
         "tools_not_called": ["read_file", "read_list", "list_files", "write_file"],
         "finish_required": false,
+        "evidence_mode": "memory_only",
+        "scoring_mode": "semantic_recall",
+        "expected_ports": ["9090"],
         "response_contains": ["newer", "9090"]
       }
     },
@@ -598,8 +621,11 @@
         "tools_called": ["finish"],
         "tools_not_called": ["read_file", "write_file", "list_files"],
         "finish_required": true,
+        "evidence_mode": "memory_only",
+        "scoring_mode": "semantic_recall",
         "response_contains_literal": ["9090", "handoff.md", "rollout.md", "status.txt", "daily_log.txt"],
         "response_contains_normalized": ["ship release notes draft", "archive benchmark artifacts", "daily agenda"],
+        "expected_categories": ["config change", "generated artifacts", "tracker changes", "daily agenda", "open work"],
         "response_format": "bullet_points",
         "response_format_rules": ["no_headings", "no_tables", "flat_bullets"]
       }
