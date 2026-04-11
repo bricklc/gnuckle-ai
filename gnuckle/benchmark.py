@@ -443,6 +443,24 @@ class HarnessTheaterObserver:
             self._add_audit(f"assistant replied ({len(tool_calls)} tool calls)")
             self._render()
             return
+        if event_type == "no_response":
+            self._update_metrics(payload)
+            attempt = payload.get("attempt", "?")
+            max_retries = payload.get("max_retries", "?")
+            retrying = bool(payload.get("retrying"))
+            self.activity = "retrying same turn" if retrying else "turn failed: no response"
+            body = "Assistant did not respond."
+            if retrying:
+                body += f" Retrying the same turn ({attempt}/{max_retries})."
+            else:
+                body += f" Retries exhausted ({attempt}/{max_retries})."
+            self._push_block("assistant", "Assistant", body)
+            self._add_audit(
+                f"no response on attempt {attempt}"
+                + ("; retrying" if retrying else "; retries exhausted")
+            )
+            self._render()
+            return
         if event_type == "tool_call":
             tool_name = str(payload.get("tool_name", "tool"))
             tool_call_id = payload.get("tool_call_id")

@@ -173,6 +173,107 @@ class SessionRunnerTests(unittest.TestCase):
         self.assertEqual(tool_result_rows[0]["status"], "error")
         self.assertEqual(result["aggregate"]["invalid_execution_count"], 1)
 
+    def test_empty_turn_retries_same_query_before_advancing(self) -> None:
+        benchmark = {
+            "id": "bench",
+            "title": "Bench",
+            "type": "session",
+            "system_prompt": "sys",
+            "tools": ["echo"],
+            "turns": [
+                {
+                    "id": "t01",
+                    "prompt": "Say hi.",
+                    "active_tools": ["echo"],
+                    "expect": {"response_contains": ["hi"], "finish_required": False},
+                },
+                {
+                    "id": "t02",
+                    "prompt": "Say done.",
+                    "active_tools": ["echo"],
+                    "expect": {"response_contains": ["done"], "finish_required": False},
+                },
+            ],
+        }
+
+        FakeOpenAI.responses = [
+            fake_response(content=""),
+            fake_response(content="hi"),
+            fake_response(content="done"),
+        ]
+
+        observer_events = []
+        with (
+            patch("gnuckle.session_runner.OpenAI", FakeOpenAI),
+            patch("gnuckle.session_runner.estimate_context_token_counts", return_value={"measured": 40, "heuristic": 40}),
+            patch("gnuckle.session_runner.get_hardware_snapshot", return_value={"vram_peak_mb": 1000}),
+            patch("gnuckle.session_runner.empty_usage", return_value={"output_tokens": 0}),
+            patch("gnuckle.session_runner.update_usage", side_effect=lambda current, usage: usage or {"output_tokens": 0}),
+            patch("gnuckle.session_runner.accumulate_usage", side_effect=lambda total, usage: {"output_tokens": (total or {}).get("output_tokens", 0) + (usage or {}).get("output_tokens", 0)}),
+            patch("gnuckle.session_runner.usage_total_tokens", side_effect=lambda usage: (usage or {}).get("output_tokens", 0)),
+        ):
+            result = run_session_benchmark(
+                benchmark,
+                base_url="http://localhost:8080/v1",
+                observer=lambda event_type, payload: observer_events.append((event_type, payload)),
+            )
+
+        self.assertEqual(len(result["turns"]), 2)
+        self.assertEqual(result["turns"][0]["assistant_text"], "hi")
+        self.assertEqual(result["turns"][0]["retry_count"], 1)
+        self.assertTrue(result["turns"][0]["initial_no_response"])
+        self.assertFalse(result["turns"][0]["no_response"])
+        self.assertEqual(result["turns"][1]["assistant_text"], "done")
+        self.assertTrue(any(event_type == "no_response" for event_type, _payload in observer_events))
+
+    def test_empty_turn_exhaustion_marks_failure_and_stops_session(self) -> None:
+        benchmark = {
+            "id": "bench",
+            "title": "Bench",
+            "type": "session",
+            "system_prompt": "sys",
+            "tools": ["echo"],
+            "turns": [
+                {
+                    "id": "t01",
+                    "prompt": "Say hi.",
+                    "active_tools": ["echo"],
+                    "expect": {"response_contains": ["hi"], "finish_required": False},
+                },
+                {
+                    "id": "t02",
+                    "prompt": "Say done.",
+                    "active_tools": ["echo"],
+                    "expect": {"response_contains": ["done"], "finish_required": False},
+                },
+            ],
+        }
+
+        FakeOpenAI.responses = [
+            fake_response(content=""),
+            fake_response(content=""),
+            fake_response(content=""),
+        ]
+
+        with (
+            patch("gnuckle.session_runner.OpenAI", FakeOpenAI),
+            patch("gnuckle.session_runner.estimate_context_token_counts", return_value={"measured": 40, "heuristic": 40}),
+            patch("gnuckle.session_runner.get_hardware_snapshot", return_value={"vram_peak_mb": 1000}),
+            patch("gnuckle.session_runner.empty_usage", return_value={"output_tokens": 0}),
+            patch("gnuckle.session_runner.update_usage", side_effect=lambda current, usage: usage or {"output_tokens": 0}),
+            patch("gnuckle.session_runner.accumulate_usage", side_effect=lambda total, usage: {"output_tokens": (total or {}).get("output_tokens", 0) + (usage or {}).get("output_tokens", 0)}),
+            patch("gnuckle.session_runner.usage_total_tokens", side_effect=lambda usage: (usage or {}).get("output_tokens", 0)),
+        ):
+            result = run_session_benchmark(benchmark, base_url="http://localhost:8080/v1")
+
+        self.assertEqual(len(result["turns"]), 1)
+        self.assertTrue(result["turns"][0]["no_response"])
+        self.assertEqual(result["turns"][0]["retry_count"], 3)
+        self.assertEqual(result["turns"][0]["scores"]["turn_score"], 0.0)
+        self.assertEqual(result["aggregate"]["no_response_turn_count"], 1)
+        transcript = result["session"]["transcript"]
+        self.assertTrue(any(entry["kind"] == "invalid_turn" for entry in transcript))
+
 
 if __name__ == "__main__":
     unittest.main()

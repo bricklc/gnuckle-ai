@@ -1,0 +1,605 @@
+{
+  "id": "persistent_tool_stress_implicit_benefit_of_doubt_40",
+  "title": "Persistent Tool Stress Test Implicit Benefit of Doubt 40",
+  "version": "1.0",
+  "author": "gnuckle-ai",
+  "description": "A 40-turn persistent session benchmark that gives the assistant strong upfront guidance and memory-like standing rules, then tests whether it can carry those conventions through implicit, messy, realistic turns without being reminded.",
+  "intent": "Give the assistant every reasonable benefit of the doubt in system prompt and standing memory, then measure whether it can infer tool use, preserve rules, prefer latest facts, and continue implicit multi-step work through a crowded persistent session.",
+  "type": "session",
+  "tags": ["tool-use", "stress", "persistent-session", "benefit-of-doubt", "implicit-tool-selection", "memory-retention", "long-dump"],
+  "meta": {
+    "id": "persistent_tool_stress_implicit_benefit_of_doubt_40",
+    "title": "Persistent Tool Stress Test Implicit Benefit of Doubt 40",
+    "version": "1.0",
+    "author": "gnuckle-ai",
+    "description": "A 40-turn persistent session benchmark that gives the assistant strong upfront guidance and memory-like standing rules, then tests whether it can carry those conventions through implicit, messy, realistic turns without being reminded.",
+    "tags": ["tool-use", "stress", "persistent-session", "benefit-of-doubt", "implicit-tool-selection", "memory-retention", "long-dump"]
+  },
+  "session": {
+    "type": "session",
+    "mode": "persistent",
+    "carry_state_across_turns": true,
+    "finish_policy": "checkpoint_or_final_only",
+    "system_prompt": "You are Gnuckle, a bounded benchmark agent operating inside a persistent session benchmark. This benchmark is intentionally generous: you are being given explicit standing rules, stable conventions, and reusable context up front so you have the highest fair chance to succeed later without reminders. Your job is to maximize correctness, continuity, and tool discipline under growing context pressure. For each turn, infer the user's real need, not just surface wording. Use tools when workspace state or bounded list state must be inspected or changed. Avoid tools when the user explicitly asks for memory-only recall or when enough session context already exists to answer without invention. Prefer the smallest correct set of active tools. Preserve the latest correct fact when old and new notes conflict. If a user prompt is messy, filter distractors and act on the operative instruction. When producing artifacts, keep them compact and operator-useful unless the user asks for more detail. Continue naturally after tool results. Use only the active tools for the current turn. Never call unavailable tools. Only call finish when the user explicitly asks for a checkpoint or final wrap-up. If you cannot complete a request because the required tool does not exist, say so plainly without inventing actions. A turn is only complete when you emit a substantive assistant response, a valid tool call, an explicit refusal, or an explicit error statement.",
+    "standing_rules": [
+      "Always respond in bullet points when summarizing, checkpointing, or wrapping up.",
+      "Never call a tool that is not active for the current turn.",
+      "When recalling prior session facts without tools, do not invent missing details.",
+      "If later notes conflict with earlier notes, the latest explicit update wins.",
+      "When the user says tracker, they mean the bounded list state.",
+      "When the user asks for a handoff or operator artifact, prefer a compact markdown file with useful section headers.",
+      "Daily agenda is fixed for the whole session: 9am review todo, 11am config check, 2pm deploy staging, 4pm journal update. Output it exactly when asked.",
+      "Config started at port 8080 and may later change during the session; if asked later, preserve both original and current values accurately."
+    ],
+    "initial_state": {
+      "benchmark_date": "2026-04-12",
+      "files": {
+        "notes.txt": "Reminder: meeting at 3pm. Bring laptop and charger.",
+        "todo.txt": "TODO:\n- Fix login bug\n- Deploy staging\n- Write tests for auth module",
+        "config.json": "{\"port\": 8080, \"host\": \"0.0.0.0\", \"debug\": false}",
+        "release_plan.md": "# Release Plan\n\nPending items:\n- confirm config\n- write handoff\n- prep release notes",
+        "ops_log.txt": "2026-04-10: baseline staging check passed.\n2026-04-11: follow-up pending.",
+        "style_guide.md": "# Operator Style\n\n- Keep handoff files compact.\n- Prefer short section headings.\n- Call out latest facts, not stale notes."
+      },
+      "list_items": []
+    }
+  },
+  "system_prompt": "You are Gnuckle, a bounded benchmark agent operating inside a persistent session benchmark. This benchmark is intentionally generous: you are being given explicit standing rules, stable conventions, and reusable context up front so you have the highest fair chance to succeed later without reminders. Your job is to maximize correctness, continuity, and tool discipline under growing context pressure. For each turn, infer the user's real need, not just surface wording. Use tools when workspace state or bounded list state must be inspected or changed. Avoid tools when the user explicitly asks for memory-only recall or when enough session context already exists to answer without invention. Prefer the smallest correct set of active tools. Preserve the latest correct fact when old and new notes conflict. If a user prompt is messy, filter distractors and act on the operative instruction. When producing artifacts, keep them compact and operator-useful unless the user asks for more detail. Continue naturally after tool results. Use only the active tools for the current turn. Never call unavailable tools. Only call finish when the user explicitly asks for a checkpoint or final wrap-up. If you cannot complete a request because the required tool does not exist, say so plainly without inventing actions. A turn is only complete when you emit a substantive assistant response, a valid tool call, an explicit refusal, or an explicit error statement.",
+  "standing_rules": [
+    "Always respond in bullet points when summarizing, checkpointing, or wrapping up.",
+    "Never call a tool that is not active for the current turn.",
+    "When recalling prior session facts without tools, do not invent missing details.",
+    "If later notes conflict with earlier notes, the latest explicit update wins.",
+    "When the user says tracker, they mean the bounded list state.",
+    "When the user asks for a handoff or operator artifact, prefer a compact markdown file with useful section headers.",
+    "Daily agenda is fixed for the whole session: 9am review todo, 11am config check, 2pm deploy staging, 4pm journal update. Output it exactly when asked.",
+    "Config started at port 8080 and may later change during the session; if asked later, preserve both original and current values accurately."
+  ],
+  "tools": ["echo", "read_file", "write_file", "list_files", "append_file", "get_date", "add_item", "update_item", "read_list", "finish"],
+  "tool_manifest": [
+    {"name": "echo", "description": "Repeat the provided text exactly.", "category": "utility"},
+    {"name": "read_file", "description": "Read a text file from the workspace.", "category": "filesystem"},
+    {"name": "write_file", "description": "Create or overwrite a text file in the workspace.", "category": "filesystem"},
+    {"name": "list_files", "description": "List files in the workspace.", "category": "filesystem"},
+    {"name": "append_file", "description": "Append text to a file in the workspace.", "category": "filesystem"},
+    {"name": "get_date", "description": "Return the benchmark's anchored date.", "category": "utility"},
+    {"name": "add_item", "description": "Add an item to the bounded benchmark list state.", "category": "list"},
+    {"name": "update_item", "description": "Update an existing benchmark list item.", "category": "list"},
+    {"name": "read_list", "description": "Read the current bounded benchmark list state.", "category": "list"},
+    {"name": "finish", "description": "Mark a checkpoint or final completion.", "category": "control"}
+  ],
+  "scoring": {
+    "mode": "criterion_based",
+    "track_hallucinated_tools": true,
+    "track_omissions": true,
+    "track_distortions": true
+  },
+  "turns": [
+    {
+      "id": "t01_echo_boot",
+      "title": "Echo boot marker",
+      "prompt": "Use the echo tool to repeat the phrase: benefit of doubt benchmark started.",
+      "active_tools": ["echo"],
+      "expect": {
+        "tools_called": ["echo"],
+        "tools_not_called": ["read_file", "write_file", "finish"],
+        "finish_required": false,
+        "response_contains": ["benefit of doubt benchmark started"]
+      }
+    },
+    {
+      "id": "t02_read_notes",
+      "title": "Read reminder file",
+      "prompt": "Read notes.txt and tell me what it says.",
+      "active_tools": ["read_file"],
+      "expect": {
+        "tools_called": ["read_file"],
+        "tools_not_called": ["write_file", "append_file"],
+        "finish_required": false,
+        "response_contains": ["meeting at 3pm", "laptop", "charger"]
+      }
+    },
+    {
+      "id": "t03_list_then_read_todo",
+      "title": "List workspace then inspect todo",
+      "prompt": "List the files in the workspace, then read todo.txt.",
+      "active_tools": ["list_files", "read_file"],
+      "expect": {
+        "tools_called": ["list_files", "read_file"],
+        "tools_not_called": ["write_file", "append_file"],
+        "tool_order": ["list_files", "read_file"],
+        "finish_required": false,
+        "response_contains": ["Fix login bug", "Deploy staging", "Write tests for auth module"]
+      }
+    },
+    {
+      "id": "t04_write_session_open",
+      "title": "Write and verify opening note",
+      "prompt": "Write 'session opened for benefit of doubt benchmark' to session_open.txt, then read it back to confirm.",
+      "active_tools": ["write_file", "read_file"],
+      "expect": {
+        "tools_called": ["write_file", "read_file"],
+        "tools_not_called": ["append_file", "list_files"],
+        "tool_order": ["write_file", "read_file"],
+        "finish_required": false,
+        "response_contains": ["session opened for benefit of doubt benchmark"]
+      }
+    },
+    {
+      "id": "t05_seed_tracker",
+      "title": "Seed tracker list state",
+      "prompt": "Add 'buy milk' to the tracker, then add 'book dentist appointment', then read the tracker.",
+      "active_tools": ["add_item", "read_list"],
+      "expect": {
+        "tools_called": ["add_item", "add_item", "read_list"],
+        "tools_not_called": ["update_item", "read_file"],
+        "tool_order": ["add_item", "add_item", "read_list"],
+        "finish_required": false,
+        "response_contains": ["buy milk", "book dentist appointment"]
+      }
+    },
+    {
+      "id": "t06_date_anchor",
+      "title": "Anchored date check",
+      "prompt": "What is today's date?",
+      "active_tools": ["get_date"],
+      "expect": {
+        "tools_called": ["get_date"],
+        "tools_not_called": ["read_file", "write_file", "finish"],
+        "finish_required": false,
+        "response_contains": ["2026-04-12"]
+      },
+      "mock_results": {
+        "get_date": {"output": "2026-04-12 (Sunday)"}
+      }
+    },
+    {
+      "id": "t07_checkpoint_one",
+      "title": "Early checkpoint",
+      "prompt": "Checkpoint: summarize what you have done so far in this session, then call finish with a short checkpoint summary.",
+      "active_tools": ["finish"],
+      "expect": {
+        "tools_called": ["finish"],
+        "tools_not_called": ["read_file", "write_file", "list_files"],
+        "finish_required": true,
+        "response_contains": ["session_open.txt", "buy milk"],
+        "response_format": "bullet_points"
+      }
+    },
+    {
+      "id": "t08_long_dump_config_sanity",
+      "title": "Long dump with distractors requiring implicit config inspection",
+      "prompt": "Pasting messy staging notes before I lose them:\n\n- lunch moved, not relevant\n- expected shape is host 0.0.0.0, port 8080, debug off\n- random idea: maybe change release banner copy later\n- what I actually need is whether the current config still matches that baseline\n- if it matches, say so plainly\n- if not, tell me the mismatch\n- do not edit anything right now\n\nThat is the only important part.",
+      "active_tools": ["read_file", "write_file", "append_file", "echo"],
+      "expect": {
+        "tools_called": ["read_file"],
+        "tools_not_called": ["write_file", "append_file", "echo"],
+        "tool_order": ["read_file"],
+        "finish_required": false,
+        "response_contains": ["8080", "0.0.0.0", "debug", "matches"],
+        "response_format": "plain_text"
+      }
+    },
+    {
+      "id": "t09_append_dated_ops_note",
+      "title": "Append a dated line to ops log",
+      "prompt": "Get today's date, then append a short dated line to ops_log.txt saying the benchmark session is active.",
+      "active_tools": ["get_date", "append_file"],
+      "expect": {
+        "tools_called": ["get_date", "append_file"],
+        "tools_not_called": ["read_file", "write_file"],
+        "tool_order": ["get_date", "append_file"],
+        "finish_required": false,
+        "response_contains": ["ops_log.txt", "2026-04-12"]
+      },
+      "mock_results": {
+        "get_date": {"output": "2026-04-12 (Sunday)"}
+      }
+    },
+    {
+      "id": "t10_update_tracker_explicit",
+      "title": "Explicit tracker cleanup",
+      "prompt": "Update 'buy milk' to 'buy 2 liters of oat milk', then read the tracker.",
+      "active_tools": ["update_item", "read_list"],
+      "expect": {
+        "tools_called": ["update_item", "read_list"],
+        "tools_not_called": ["add_item", "read_file"],
+        "tool_order": ["update_item", "read_list"],
+        "finish_required": false,
+        "response_contains": ["buy 2 liters of oat milk"]
+      }
+    },
+    {
+      "id": "t11_long_dump_make_handoff",
+      "title": "Long dump implying read then write handoff artifact",
+      "prompt": "I need a clean handoff artifact because the chat is getting crowded.\n\nContext dump:\n- the unfinished work is whatever is in the task list we already looked at\n- keep the artifact compact and useful to the next operator\n- use a markdown heading, then a short pending-work section and a short risks section\n- ignore this side note about changing keyboard switches\n- ignore the idea about banner copy for now\n- put the result in handoff.md\n- do not write a long explanation back here\n\nThat should be enough.",
+      "active_tools": ["read_file", "write_file", "list_files"],
+      "expect": {
+        "tools_called": ["read_file", "write_file"],
+        "tools_not_called": ["list_files", "append_file", "echo"],
+        "tool_order": ["read_file", "write_file"],
+        "finish_required": false,
+        "response_contains": ["handoff.md"],
+        "response_format": "plain_text"
+      }
+    },
+    {
+      "id": "t12_verify_handoff",
+      "title": "Read back handoff artifact",
+      "prompt": "Read handoff.md and summarize what it contains.",
+      "active_tools": ["read_file"],
+      "expect": {
+        "tools_called": ["read_file"],
+        "tools_not_called": ["write_file", "append_file"],
+        "finish_required": false,
+        "response_contains": ["pending", "risks", "Fix login bug", "Deploy staging"],
+        "response_format": "bullet_points"
+      }
+    },
+    {
+      "id": "t13_rewrite_config_port",
+      "title": "Change config port explicitly",
+      "prompt": "Read config.json, change the port to 9090, and write it back.",
+      "active_tools": ["read_file", "write_file"],
+      "expect": {
+        "tools_called": ["read_file", "write_file"],
+        "tools_not_called": ["append_file", "list_files"],
+        "tool_order": ["read_file", "write_file"],
+        "finish_required": false,
+        "response_contains": ["9090"]
+      }
+    },
+    {
+      "id": "t14_verify_config_rewrite",
+      "title": "Verify updated config",
+      "prompt": "Read config.json back and confirm the current port.",
+      "active_tools": ["read_file"],
+      "expect": {
+        "tools_called": ["read_file"],
+        "tools_not_called": ["write_file", "append_file"],
+        "finish_required": false,
+        "response_contains": ["9090"]
+      }
+    },
+    {
+      "id": "t15_long_dump_tracker_cleanup",
+      "title": "Long dump with distractors implying tracker updates",
+      "prompt": "Messy planning dump:\n\n- dentist should be next Wednesday, not the vague placeholder from earlier\n- I also need something in the tracker for release notes shipping\n- maybe repaint the desk this month, not relevant\n- oat milk thing is already fixed\n- if anything needs cleanup, make the tracker reflect the current reality and then show me the tracker state\n- random note: blue notebook is in the car\n\nThat is all.",
+      "active_tools": ["update_item", "add_item", "read_list", "read_file"],
+      "expect": {
+        "tools_called": ["update_item", "add_item", "read_list"],
+        "tools_not_called": ["read_file", "write_file", "append_file"],
+        "tool_order": ["update_item", "add_item", "read_list"],
+        "finish_required": false,
+        "response_contains": ["book dentist appointment for next Wednesday", "ship release notes", "buy 2 liters of oat milk"]
+      }
+    },
+    {
+      "id": "t16_recall_reminder_without_tools",
+      "title": "Recall reminder without tools",
+      "prompt": "Without using any tools, what did notes.txt remind me to bring?",
+      "active_tools": [],
+      "expect": {
+        "tools_called": [],
+        "tools_not_called": ["read_file", "list_files", "write_file"],
+        "finish_required": false,
+        "response_contains": ["laptop", "charger"]
+      }
+    },
+    {
+      "id": "t17_memory_combo_no_tools",
+      "title": "Recall core facts without tools",
+      "prompt": "Without using any tools, tell me the three original TODO items and the original config port before the later change.",
+      "active_tools": [],
+      "expect": {
+        "tools_called": [],
+        "tools_not_called": ["read_file", "write_file", "list_files"],
+        "finish_required": false,
+        "response_contains": ["Fix login bug", "Deploy staging", "Write tests for auth module", "8080"],
+        "response_format": "bullet_points"
+      }
+    },
+    {
+      "id": "t18_refuse_email_tool",
+      "title": "Refuse nonexistent email action",
+      "prompt": "Send an email to the team with the current handoff summary.",
+      "active_tools": [],
+      "expect": {
+        "tools_called": [],
+        "tools_not_called": ["send_email", "read_file", "finish"],
+        "finish_required": false,
+        "response_contains": ["can't", "email"],
+        "expect_refusal": true
+      }
+    },
+    {
+      "id": "t19_workspace_inventory",
+      "title": "List workspace after several writes",
+      "prompt": "List the files in the workspace and mention any new files created during this session.",
+      "active_tools": ["list_files"],
+      "expect": {
+        "tools_called": ["list_files"],
+        "tools_not_called": ["read_file", "write_file", "append_file"],
+        "finish_required": false,
+        "response_contains": ["session_open.txt", "handoff.md"]
+      }
+    },
+    {
+      "id": "t20_long_dump_stale_memory_status_append",
+      "title": "Long dump testing stale-memory handling and multi-step chain",
+      "prompt": "Deployment scratchpad, sorry this is ugly:\n\n- very old note: staging ran on 8080\n- newer change from earlier in this same session moved it to 9090\n- somebody typed 8081 in chat, that was a mistake and should not propagate\n- I want one short dated line added to status.txt for the next person, using the live port\n- do not overexplain the response\n- unrelated: replace desk lamp bulb\n\nPlease handle that from the latest correct state.",
+      "active_tools": ["get_date", "append_file", "read_file"],
+      "expect": {
+        "tools_called": ["get_date", "append_file"],
+        "tools_not_called": ["read_file", "write_file", "list_files"],
+        "tool_order": ["get_date", "append_file"],
+        "finish_required": false,
+        "response_contains": ["status.txt", "9090", "2026-04-12"]
+      },
+      "mock_results": {
+        "get_date": {"output": "2026-04-12 (Sunday)"}
+      }
+    },
+    {
+      "id": "t21_verify_status_file",
+      "title": "Verify appended status line",
+      "prompt": "Read status.txt and tell me the port mentioned there.",
+      "active_tools": ["read_file"],
+      "expect": {
+        "tools_called": ["read_file"],
+        "tools_not_called": ["write_file", "append_file"],
+        "finish_required": false,
+        "response_contains": ["9090", "2026-04-12"]
+      }
+    },
+    {
+      "id": "t22_echo_mid_marker",
+      "title": "Mid-session echo marker",
+      "prompt": "Use the echo tool to repeat: context retention still active.",
+      "active_tools": ["echo"],
+      "expect": {
+        "tools_called": ["echo"],
+        "tools_not_called": ["read_file", "write_file", "finish"],
+        "finish_required": false,
+        "response_contains": ["context retention still active"]
+      }
+    },
+    {
+      "id": "t23_long_dump_rule_retention",
+      "title": "Long dump testing rule retention under noisy recap",
+      "prompt": "Before we wrap this part, here is my messy recap:\n\n- config started at 8080 and later changed\n- there is a handoff artifact now\n- tracker should include the dentist timing update and the release-notes item\n- I do not need another file touched for this\n- I want the state of the session, what changed, and what still looks risky\n- keep it tight and readable\n- unrelated clutter: check if the plant needs water tomorrow\n\nGive me the checkpoint in the same style you have been using for summaries.",
+      "active_tools": [],
+      "expect": {
+        "tools_called": [],
+        "tools_not_called": ["read_file", "write_file", "append_file", "list_files"],
+        "finish_required": false,
+        "response_contains": ["9090", "handoff.md", "book dentist appointment for next Wednesday", "ship release notes"],
+        "response_format": "bullet_points"
+      }
+    },
+    {
+      "id": "t24_read_ops_log",
+      "title": "Read ops log after append",
+      "prompt": "Read ops_log.txt and summarize the dated lines.",
+      "active_tools": ["read_file"],
+      "expect": {
+        "tools_called": ["read_file"],
+        "tools_not_called": ["append_file", "write_file"],
+        "finish_required": false,
+        "response_contains": ["2026-04-10", "2026-04-11", "2026-04-12"],
+        "response_format": "bullet_points"
+      }
+    },
+    {
+      "id": "t25_long_dump_implicit_handoff_inspection",
+      "title": "Late long dump requiring implicit handoff inspection",
+      "prompt": "I am about to paste the handoff note into another thread and I do not trust my memory anymore.\n\nWhat I think is true:\n- it should mention the unfinished work from the task list we looked at earlier\n- it should also have a short risks section\n- I do not want you rewriting anything right now\n- if I am misremembering, tell me what actually ended up in that artifact\n- ignore the side thought about changing office chair wheels\n\nJust give me the factual contents that matter.",
+      "active_tools": ["read_file", "write_file", "list_files"],
+      "expect": {
+        "tools_called": ["read_file"],
+        "tools_not_called": ["write_file", "list_files", "append_file"],
+        "tool_order": ["read_file"],
+        "finish_required": false,
+        "response_contains": ["Fix login bug", "Deploy staging", "Write tests for auth module", "risks"],
+        "response_format": "bullet_points"
+      }
+    },
+    {
+      "id": "t26_read_tracker_state",
+      "title": "Read current tracker state",
+      "prompt": "Read the current tracker state back to me.",
+      "active_tools": ["read_list"],
+      "expect": {
+        "tools_called": ["read_list"],
+        "tools_not_called": ["add_item", "update_item", "read_file"],
+        "finish_required": false,
+        "response_contains": ["buy 2 liters of oat milk", "book dentist appointment for next Wednesday", "ship release notes"]
+      }
+    },
+    {
+      "id": "t27_memory_current_state",
+      "title": "Memory recall of current config and tracker",
+      "prompt": "Without using any tools, what is the current config port and what are the current tracker items?",
+      "active_tools": [],
+      "expect": {
+        "tools_called": [],
+        "tools_not_called": ["read_file", "read_list", "write_file"],
+        "finish_required": false,
+        "response_contains": ["9090", "buy 2 liters of oat milk", "book dentist appointment for next Wednesday", "ship release notes"],
+        "response_format": "bullet_points"
+      }
+    },
+    {
+      "id": "t28_long_dump_daily_log_chain",
+      "title": "Pure implicit multi-step chain with append and verify",
+      "prompt": "Brain dump: need to log today's date into a new daily_log.txt but only append one clean line with the current port from config, nothing else, then confirm by reading it back without extra talk.",
+      "active_tools": ["get_date", "read_file", "append_file"],
+      "expect": {
+        "tools_called": ["get_date", "read_file", "append_file", "read_file"],
+        "tools_not_called": ["write_file", "list_files"],
+        "tool_order": ["get_date", "read_file", "append_file", "read_file"],
+        "finish_required": false,
+        "response_contains": ["daily_log.txt", "2026-04-12", "9090"]
+      },
+      "mock_results": {
+        "get_date": {"output": "2026-04-12 (Sunday)"}
+      }
+    },
+    {
+      "id": "t29_long_dump_status_md_chain",
+      "title": "Pure implicit distractor-heavy artifact chain",
+      "prompt": "Ugly notes dump: ignore the coffee order, the old 8080 port mention is stale, dentist is already updated, just use the live config port to create a quick status.md with today's date and the exact current tracker items listed, no more.",
+      "active_tools": ["get_date", "read_file", "read_list", "write_file"],
+      "expect": {
+        "tools_called": ["get_date", "read_file", "read_list", "write_file"],
+        "tools_not_called": ["append_file", "list_files"],
+        "tool_order": ["get_date", "read_file", "read_list", "write_file"],
+        "finish_required": false,
+        "response_contains": ["status.md", "9090"]
+      },
+      "mock_results": {
+        "get_date": {"output": "2026-04-12 (Sunday)"}
+      }
+    },
+    {
+      "id": "t30_daily_agenda_test",
+      "title": "Daily agenda recall under pressure",
+      "prompt": "What's my daily agenda for today?",
+      "active_tools": [],
+      "expect": {
+        "tools_called": [],
+        "tools_not_called": ["read_file", "write_file", "list_files", "get_date", "read_list"],
+        "finish_required": false,
+        "response_contains": ["9am review todo", "11am config check", "2pm deploy staging", "4pm journal update"],
+        "response_format": "bullet_points"
+      }
+    },
+    {
+      "id": "t31_long_dump_rollout_artifact",
+      "title": "Long dump requiring multi-source rollout artifact",
+      "prompt": "Release prep dump:\n\n- I want one compact rollout.md for another operator\n- the useful inputs are the release plan, the existing handoff, and the current tracker state\n- do not make it fancy, just enough to act on\n- sections should be Ready, Open Risks, and Tracker Follow-Ups\n- ignore this note about snacks for tomorrow\n- ignore the thought about changing monitor arms\n- make the artifact and then tell me it exists\n\nThat is the actual need.",
+      "active_tools": ["read_file", "read_list", "write_file", "list_files"],
+      "expect": {
+        "tools_called": ["read_file", "read_file", "read_list", "write_file"],
+        "tools_not_called": ["list_files", "append_file", "echo"],
+        "tool_order": ["read_file", "read_file", "read_list", "write_file"],
+        "finish_required": false,
+        "response_contains": ["rollout.md"]
+      }
+    },
+    {
+      "id": "t32_verify_rollout_artifact",
+      "title": "Read back rollout artifact",
+      "prompt": "Read rollout.md and summarize what is actionable in it.",
+      "active_tools": ["read_file"],
+      "expect": {
+        "tools_called": ["read_file"],
+        "tools_not_called": ["write_file", "append_file"],
+        "finish_required": false,
+        "response_contains": ["Ready", "Open Risks", "Tracker Follow-Ups"],
+        "response_format": "bullet_points"
+      }
+    },
+    {
+      "id": "t33_add_archive_item",
+      "title": "Add archive artifact task",
+      "prompt": "Add 'archive benchmark artifacts' to the tracker, then read the tracker.",
+      "active_tools": ["add_item", "read_list"],
+      "expect": {
+        "tools_called": ["add_item", "read_list"],
+        "tools_not_called": ["update_item", "read_file"],
+        "tool_order": ["add_item", "read_list"],
+        "finish_required": false,
+        "response_contains": ["archive benchmark artifacts"]
+      }
+    },
+    {
+      "id": "t34_long_dump_late_tracker_update",
+      "title": "Late long dump with stale and current tracker facts",
+      "prompt": "Messy follow-up notes:\n\n- old wording for tracker said just ship release notes\n- latest wording should be ship release notes draft\n- dentist is still next Wednesday, do not regress that\n- archive benchmark artifacts should stay\n- ignore this completely unrelated note about buying tape\n- make the tracker reflect the latest wording and show me the result\n\nThat should be enough.",
+      "active_tools": ["update_item", "read_list", "add_item"],
+      "expect": {
+        "tools_called": ["update_item", "read_list"],
+        "tools_not_called": ["add_item", "read_file", "write_file"],
+        "tool_order": ["update_item", "read_list"],
+        "finish_required": false,
+        "response_contains": ["ship release notes draft", "book dentist appointment for next Wednesday", "archive benchmark artifacts"]
+      }
+    },
+    {
+      "id": "t35_memory_agenda_and_tracker",
+      "title": "Memory recall of agenda and tracker",
+      "prompt": "Without using any tools, give me today's fixed agenda and the current tracker items.",
+      "active_tools": [],
+      "expect": {
+        "tools_called": [],
+        "tools_not_called": ["read_file", "read_list", "write_file", "get_date"],
+        "finish_required": false,
+        "response_contains": ["9am review todo", "11am config check", "2pm deploy staging", "4pm journal update", "buy 2 liters of oat milk", "ship release notes draft", "archive benchmark artifacts"],
+        "response_format": "bullet_points"
+      }
+    },
+    {
+      "id": "t36_long_dump_memory_only_avoid_tools",
+      "title": "Late long dump where correct behavior is avoid tools",
+      "prompt": "Noisy recap, but do not inspect anything right now:\n\n- old config port was 8080\n- later we changed it and that later value is the one I care about\n- there is a handoff and a rollout artifact now\n- tracker got a wording update on release notes\n- I only want the answer from what we have already established in this session\n- ignore this side note about cleaning cables\n\nJust tell me whether staging is still on the old port or the newer one, and name the newer one.",
+      "active_tools": ["read_file", "read_list", "list_files"],
+      "expect": {
+        "tools_called": [],
+        "tools_not_called": ["read_file", "read_list", "list_files", "write_file"],
+        "finish_required": false,
+        "response_contains": ["newer", "9090"]
+      }
+    },
+    {
+      "id": "t37_read_daily_log",
+      "title": "Read back daily log",
+      "prompt": "Read daily_log.txt and quote the logged line back to me.",
+      "active_tools": ["read_file"],
+      "expect": {
+        "tools_called": ["read_file"],
+        "tools_not_called": ["append_file", "write_file"],
+        "finish_required": false,
+        "response_contains": ["2026-04-12", "9090"]
+      }
+    },
+    {
+      "id": "t38_long_dump_late_checkpoint",
+      "title": "Late long dump testing stale-memory handling and rule retention",
+      "prompt": "Final noisy checkpoint before wrap:\n\n- some very old notes still mention 8080, but that is not current anymore\n- there are now several generated artifacts and I care about the meaningful ones\n- tracker should reflect the latest release-notes wording and still include the archive task\n- I do not want another file touched\n- tell me what changed, what the latest config state is, and what still remains open\n- keep the format consistent with earlier checkpoints\n- ignore the reminder to buy batteries\n\nThat is the actual request.",
+      "active_tools": [],
+      "expect": {
+        "tools_called": [],
+        "tools_not_called": ["read_file", "write_file", "append_file", "list_files", "read_list"],
+        "finish_required": false,
+        "response_contains": ["9090", "handoff.md", "rollout.md", "ship release notes draft", "archive benchmark artifacts"],
+        "response_format": "bullet_points"
+      }
+    },
+    {
+      "id": "t39_workspace_inventory_final",
+      "title": "Late workspace inventory",
+      "prompt": "List the files in the workspace and mention the artifacts created during this session.",
+      "active_tools": ["list_files"],
+      "expect": {
+        "tools_called": ["list_files"],
+        "tools_not_called": ["read_file", "write_file", "append_file"],
+        "finish_required": false,
+        "response_contains": ["session_open.txt", "handoff.md", "status.txt", "daily_log.txt", "status.md", "rollout.md"]
+      }
+    },
+    {
+      "id": "t40_final_wrap",
+      "title": "Final session wrap-up",
+      "prompt": "Final checkpoint: summarize the full session in bullet points, including config changes, generated artifacts, tracker changes, agenda recall, and open work, then call finish with a short final summary.",
+      "active_tools": ["finish"],
+      "expect": {
+        "tools_called": ["finish"],
+        "tools_not_called": ["read_file", "write_file", "list_files"],
+        "finish_required": true,
+        "response_contains": ["9090", "handoff.md", "rollout.md", "status.txt", "daily_log.txt", "ship release notes draft", "archive benchmark artifacts", "daily agenda"],
+        "response_format": "bullet_points"
+      }
+    }
+  ]
+}

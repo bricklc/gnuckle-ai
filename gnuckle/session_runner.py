@@ -30,6 +30,7 @@ from gnuckle.tool_executor import TOOL_SPECS, tool_definitions
 MODEL = "local-model"
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent / "benchmarks"
 DEFAULT_BENCHMARK_DATE = "2026-04-10"
+MAX_NO_RESPONSE_RETRIES = 2
 
 
 @dataclass
@@ -172,10 +173,32 @@ def _score_turn(
     actual_tool_calls: list[str],
     assistant_text: str,
     hallucinated_tools: list[str],
+    *,
+    no_response: bool = False,
 ) -> dict:
     """Score a single turn against its expectations."""
     expect = turn_def.get("expect", {})
     scores = {}
+
+    scores["no_response"] = bool(no_response)
+    scores["empty_turn"] = bool(no_response)
+    scores["invalid_turn_completion"] = bool(no_response)
+
+    if no_response:
+        scores["tool_recall"] = 0.0 if expect.get("tools_called", []) else 1.0
+        scores["tool_precision"] = 0.0
+        scores["extra_tools"] = []
+        scores["missing_tools"] = list(dict.fromkeys(expect.get("tools_called", [])))
+        scores["tool_order_correct"] = not bool(expect.get("tool_order", []))
+        scores["unwanted_tool_violations"] = []
+        scores["hallucinated_tools"] = hallucinated_tools
+        scores["content_recall"] = 0.0 if expect.get("response_contains", []) else 1.0
+        scores["content_missing"] = list(expect.get("response_contains", []))
+        scores["format_correct"] = False
+        scores["refusal_detected"] = False if expect.get("expect_refusal") else None
+        scores["finish_called"] = False if expect.get("finish_required") else None
+        scores["turn_score"] = 0.0
+        return scores
 
     expected_tools = expect.get("tools_called", [])
     if expected_tools:
@@ -549,6 +572,9 @@ def run_session_benchmark(
         max_tool_rounds = 10
         assistant_text = ""
         last_usage = empty_usage()
+        retry_count = 0
+        initial_no_response = False
+        no_response = False
 
         while True:
             call_start = time.perf_counter()
@@ -580,6 +606,46 @@ def run_session_benchmark(
                 }
                 for index, tool_call in enumerate(message.tool_calls or [])
             ]
+
+            has_visible_event = bool(assistant_text.strip()) or bool(raw_tool_calls)
+            if not has_visible_event:
+                if retry_count == 0:
+                    initial_no_response = True
+                retry_count += 1
+                no_response = True
+                invalid_execution_events.append(
+                    {
+                        "turn_id": turn_id,
+                        "error": "no_response",
+                        "attempt": retry_count,
+                    }
+                )
+                if observer is not None:
+                    observer(
+                        "no_response",
+                        {
+                            "turn": turn_num,
+                            "attempt": retry_count,
+                            "max_retries": MAX_NO_RESPONSE_RETRIES,
+                            "retrying": retry_count <= MAX_NO_RESPONSE_RETRIES,
+                            "reason": "assistant emitted no text and no tool calls",
+                            "latency_ms": call_elapsed_ms,
+                        },
+                    )
+                if retry_count <= MAX_NO_RESPONSE_RETRIES:
+                    continue
+                _append_transcript_entry(
+                    transcript,
+                    "assistant",
+                    "invalid_turn",
+                    "Assistant did not respond.",
+                    turn_id=turn_id,
+                    status="no_response",
+                )
+                assistant_text = ""
+                break
+
+            no_response = False
 
             if observer is not None:
                 observer(
@@ -698,7 +764,13 @@ def run_session_benchmark(
         context_counts = estimate_context_token_counts(messages, tool_defs_by_turn[turn_id], base_url=base_url)
         context_estimate = int(context_counts["measured"]) if context_counts["measured"] is not None else int(context_counts["heuristic"])
         hardware = get_hardware_snapshot(server_pid)
-        scores = _score_turn(turn_def, actual_tools_called, assistant_text, hallucinated_tools)
+        scores = _score_turn(
+            turn_def,
+            actual_tools_called,
+            assistant_text,
+            hallucinated_tools,
+            no_response=no_response,
+        )
         tokens_per_second = round(total_output_tokens / max(turn_elapsed_ms / 1000.0, 0.001), 2)
         turn_invalid_events = [event for event in invalid_execution_events if event["turn_id"] == turn_id]
 
@@ -711,6 +783,9 @@ def run_session_benchmark(
             "tools_called": actual_tools_called,
             "hallucinated_tools": hallucinated_tools,
             "tool_rounds": tool_round,
+            "retry_count": retry_count,
+            "initial_no_response": initial_no_response,
+            "no_response": no_response,
             "assistant_text": assistant_text[:2000],
             "scores": scores,
             "metrics": {
@@ -748,6 +823,9 @@ def run_session_benchmark(
                     "hardware_usage": hardware,
                 },
             )
+        if no_response:
+            print_step(f"turn failed: empty response after {retry_count} attempts")
+            break
 
     render_progress("session complete", len(turns), len(turns), done=True)
 
@@ -781,6 +859,7 @@ def run_session_benchmark(
             "final_hardware": final_hardware,
             "provider_usage_total": total_provider_usage,
             "invalid_execution_count": len(invalid_execution_events),
+            "no_response_turn_count": sum(1 for turn in turn_results if turn.get("no_response")),
         },
         "session": {
             "mode": benchmark.get("session", {}).get("mode", "persistent"),
