@@ -355,6 +355,7 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
         "episode_start",
         workflow_id=workflow.workflow_id,
         title=workflow.title,
+        session_mode=session_mode,
         workspace=str(workspace_dir),
         system_prompt=system_prompt,
         user_event=user_event,
@@ -663,6 +664,7 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                     "tool_call",
                     turn=turn_index,
                     tool_name=tool_name,
+                    tool_call_id=tool_call_id,
                     arguments=arguments,
                     expected=tool_name in workflow.expected_tools,
                     active=tool_name in workflow.active_tools,
@@ -690,6 +692,7 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                     "tool_result",
                     turn=turn_index,
                     tool_name=tool_name,
+                    tool_call_id=tool_call_id,
                     ok=result.get("ok", False),
                     result=result,
                 )

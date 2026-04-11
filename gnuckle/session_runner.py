@@ -515,6 +515,7 @@ def run_session_benchmark(
             {
                 "workflow_id": bench_id,
                 "title": benchmark["title"],
+                "session_mode": benchmark.get("session", {}).get("mode", "persistent"),
                 "workspace": f"session://{bench_id}",
                 "active_tools": tools,
                 "max_turns": len(turns),
@@ -637,7 +638,7 @@ def run_session_benchmark(
                     )
 
                 if observer is not None:
-                    observer("tool_call", {"tool_name": tool_name, "arguments": arguments})
+                    observer("tool_call", {"tool_name": tool_name, "tool_call_id": tool_call_id, "arguments": arguments})
 
                 _append_transcript_entry(
                     transcript,
@@ -683,7 +684,15 @@ def run_session_benchmark(
                 )
 
                 if observer is not None:
-                    observer("tool_result", {"tool_name": tool_name, "ok": bool(result.get("ok")), "result": result})
+                    observer(
+                        "tool_result",
+                        {
+                            "tool_name": tool_name,
+                            "tool_call_id": tool_call_id,
+                            "ok": bool(result.get("ok")),
+                            "result": result,
+                        },
+                    )
 
         turn_elapsed_ms = round((time.perf_counter() - turn_start) * 1000, 1)
         context_counts = estimate_context_token_counts(messages, tool_defs_by_turn[turn_id], base_url=base_url)
@@ -727,6 +736,18 @@ def run_session_benchmark(
             f"    {status} score={scores['turn_score']}  tools={actual_tools_called}  "
             f"ttft={first_response_ms}ms  ctx~{context_estimate}  tps={tokens_per_second}"
         )
+        if observer is not None:
+            observer(
+                "turn_metrics",
+                {
+                    "turn": turn_num,
+                    "ttft_ms": first_response_ms,
+                    "latency_ms": turn_elapsed_ms,
+                    "tokens_per_second": tokens_per_second,
+                    "context_tokens_estimate": context_estimate,
+                    "hardware_usage": hardware,
+                },
+            )
 
     render_progress("session complete", len(turns), len(turns), done=True)
 

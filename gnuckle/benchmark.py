@@ -258,48 +258,118 @@ class HarnessTheaterObserver:
         self.show_prompts = show_prompts
         self.workflow_id = ""
         self.title = ""
+        self.session_mode = "persistent"
         self.workspace = ""
         self.tools = []
         self.max_turns = 0
         self.current_turn = 0
-        self.prompt = ""
-        self.assistant = ""
-        self.prompt_label = "Prompt"
-        self.metrics = {}
-        self.verification = ""
-        self.final = ""
-        self.events = deque(maxlen=10)
-        self.transcript = deque(maxlen=28)
-        self.last_render_at = 0.0
+        self.metrics = {"context": "n/a", "vram": "n/a", "latency": "n/a"}
+        self.activity = "idle"
+        self.audit = deque(maxlen=6)
+        self.transcript = deque(maxlen=22)
+        self.pending_tools = {}
 
-    def _add_event(self, text: str) -> None:
-        self.events.appendleft(text)
+    def _add_audit(self, text: str) -> None:
+        self.audit.appendleft(text)
 
-    def _add_transcript(self, side: str, kind: str, body: str, status: str = "") -> None:
-        self.transcript.append(
-            {
-                "side": side,
-                "kind": kind,
-                "body": body.strip(),
-                "status": status.strip(),
-            }
-        )
+    def _push_block(self, block_type: str, title: str, body: str = "", status: str = "", meta: dict | None = None) -> None:
+        entry = {
+            "type": block_type,
+            "title": title,
+            "body": (body or "").strip(),
+            "status": (status or "").strip(),
+            "meta": dict(meta or {}),
+        }
+        self.transcript.append(entry)
+        return entry
+
+    def _wrap_lines(self, text: str, width: int, indent: str = "") -> list[str]:
+        text = str(text or "")
+        if not text:
+            return [indent.rstrip()]
+        lines = []
+        available = max(16, width - len(indent))
+        for raw_line in text.splitlines() or [""]:
+            remaining = raw_line.rstrip() or ""
+            if not remaining:
+                lines.append(indent.rstrip())
+                continue
+            while len(remaining) > available:
+                split_at = remaining.rfind(" ", 0, available)
+                if split_at < 1:
+                    split_at = available
+                lines.append(f"{indent}{remaining[:split_at].rstrip()}")
+                remaining = remaining[split_at:].lstrip()
+            lines.append(f"{indent}{remaining}")
+        return lines
+
+    def _format_tool_block(self, item: dict, width: int) -> list[str]:
+        status = item["status"] or item["meta"].get("status", "")
+        header = item["title"] + (f" [{status}]" if status else "")
+        lines = [header[:width]]
+        input_text = item["meta"].get("input", "")
+        result_text = item["meta"].get("result", "")
+        if input_text:
+            lines.extend(self._wrap_lines(f"Input: {input_text}", width, "  "))
+        if result_text:
+            lines.extend(self._wrap_lines(f"Result: {result_text}", width, "  "))
+        if not input_text and not result_text and item["body"]:
+            lines.extend(self._wrap_lines(item["body"], width, "  "))
+        return lines
 
     def _render_transcript(self, width: int) -> list[str]:
-        lines = ["[ Transcript ]", "-" * width]
+        lines = ["[ Live Transcript ]", "-" * width]
         for item in self.transcript:
-            side = item["side"]
-            kind = item["kind"]
-            status = f" [{item['status']}]" if item["status"] else ""
-            header = f"{side.upper()} :: {kind}{status}"
-            lines.append(header[:width])
-            body_lines = (item["body"] or "").splitlines() or [""]
-            for raw in body_lines[:8]:
-                lines.append(("  " + raw)[:width])
-            if len(body_lines) > 8:
-                lines.append("  ... [more]")
+            if item["type"] == "tool":
+                lines.extend(self._format_tool_block(item, width))
+            else:
+                lines.append(item["title"][:width])
+                if item["body"]:
+                    lines.extend(self._wrap_lines(item["body"], width, "  "))
             lines.append("")
         return lines
+
+    def _format_vram(self, value) -> str:
+        if value in (None, "", "n/a"):
+            return "n/a"
+        try:
+            mb = float(value)
+        except (TypeError, ValueError):
+            return str(value)
+        if mb >= 1024:
+            return f"{mb / 1024.0:.1f} GB"
+        return f"{mb:.0f} MB"
+
+    def _update_metrics(self, payload: dict) -> None:
+        context_value = payload.get("context_tokens_estimate")
+        if context_value is not None:
+            percent = payload.get("context_percent_used")
+            if percent is not None:
+                self.metrics["context"] = f"{int(context_value)} est ({percent:.1f}%)"
+            else:
+                self.metrics["context"] = f"{int(context_value)} est"
+        hardware = payload.get("hardware_usage") or {}
+        vram_value = hardware.get("vram_peak_mb", hardware.get("vram_steady_mb"))
+        if vram_value is not None:
+            self.metrics["vram"] = self._format_vram(vram_value)
+        latency_ms = payload.get("latency_ms")
+        if latency_ms is not None:
+            self.metrics["latency"] = f"{latency_ms} ms"
+
+    def _find_pending_tool(self, tool_call_id: str | None, tool_name: str) -> dict | None:
+        if tool_call_id and tool_call_id in self.pending_tools:
+            return self.pending_tools[tool_call_id]
+        for item in reversed(self.transcript):
+            if item["type"] == "tool" and item["meta"].get("tool_name") == tool_name and item["status"] == "running":
+                return item
+        return None
+
+    def _summarize_tool_result(self, result: dict) -> str:
+        for key in ("summary", "content", "output", "text", "error"):
+            value = result.get(key)
+            if isinstance(value, str) and value.strip():
+                return _trim_block(value, 1000)
+        return _trim_block(json.dumps(result, ensure_ascii=True), 1000)
 
     def _render(self) -> None:
         width = _terminal_width()
@@ -310,23 +380,20 @@ class HarnessTheaterObserver:
         if not _is_interactive_terminal():
             os.system("cls" if os.name == "nt" else "clear")
         top = "=" * width
-        title = f" SIMULATION | {self.workflow_id} | {self.title} "
+        title = f" Session: {self.title or self.workflow_id} "
         print(top)
         print(title[:width])
-        hud = (
-            f"turn {self.current_turn}/{self.max_turns or '?'}"
-            f" | ctx {self.metrics.get('context', 'n/a')}"
-            f" | vram {self.metrics.get('vram', 'n/a')}"
-            f" | latency {self.metrics.get('latency', 'n/a')}"
-            f" | workspace {self.workspace}"
-        )
-        print(hud[:width])
+        print(f"Mode: {self.session_mode} | Turn: {self.current_turn}/{self.max_turns or '?'} | Workflow: {self.workflow_id}"[:width])
+        print(f"Tools: {', '.join(self.tools)}"[:width])
+        print(
+            f"Context: {self.metrics.get('context', 'n/a')} | VRAM: {self.metrics.get('vram', 'n/a')} | "
+            f"Latency: {self.metrics.get('latency', 'n/a')} | Activity: {self.activity}"
+        [:width])
         print(top)
-        print("-" * width)
         for line in self._render_transcript(width):
             print(line[:width])
         print("-" * width)
-        for line in _line_block("Event Rail", "\n".join(self.events), width, max_lines=10):
+        for line in _line_block("Monitoring", "\n".join(self.audit), width, max_lines=6):
             print(line[:width])
         print("=" * width, flush=True)
 
@@ -334,92 +401,122 @@ class HarnessTheaterObserver:
         if event_type == "episode_start":
             self.workflow_id = str(payload.get("workflow_id", "unknown"))
             self.title = str(payload.get("title", ""))
+            self.session_mode = str(payload.get("session_mode", "persistent"))
             self.workspace = str(payload.get("workspace", ""))
             self.tools = list(payload.get("active_tools", []))
             self.max_turns = int(payload.get("max_turns", 0) or 0)
-            self.prompt = _trim_block(str(payload.get("user_event", "")), 1600 if self.show_prompts == "full" else 700)
-            self.prompt_label = "User Event"
-            self.assistant = ""
-            self.verification = ""
-            self.final = ""
             self.metrics = {"context": "n/a", "vram": "n/a", "latency": "n/a"}
-            self.events.clear()
+            self.activity = "session ready"
+            self.audit.clear()
             self.transcript.clear()
+            self.pending_tools.clear()
             if self.show_prompts != "off":
-                self._add_transcript("user", "prompt", self.prompt)
-            self._add_event(f"tools: {', '.join(self.tools)}")
+                prompt = _trim_block(str(payload.get("user_event", "")), 2200 if self.show_prompts == "full" else 900)
+                self._push_block("user", "User", prompt)
+            self._add_audit(f"workspace: {self.workspace}")
             self._render()
             return
         if event_type == "turn_start":
             self.current_turn = int(payload.get("turn", 0) or 0)
-            self.prompt_label = f"Turn {self.current_turn} Prompt"
-            self._add_event(f"turn {self.current_turn} started")
+            self.activity = "waiting for next user turn"
+            self._add_audit(f"turn {self.current_turn} started")
             self._render()
             return
         if event_type == "model_request":
+            self.activity = "waiting for model response"
             prompt = str(payload.get("prompt", "")).strip()
             if prompt and self.show_prompts != "off":
                 limit = 1800 if self.show_prompts == "full" else 700
-                self.prompt = _trim_block(prompt, limit)
-                if not self.transcript or self.transcript[-1]["body"] != self.prompt:
-                    self._add_transcript("user", "prompt", self.prompt)
-            self._add_event(f"model request attempt {payload.get('attempt', '?')}")
+                prompt = _trim_block(prompt, limit)
+                if not self.transcript or self.transcript[-1].get("body") != prompt:
+                    self._push_block("user", "User", prompt)
+            self._add_audit(f"model request attempt {payload.get('attempt', '?')}")
             self._render()
             return
         if event_type in {"assistant_action", "plaintext_turn"}:
-            self.assistant = _trim_block(str(payload.get("content", "")), 2400)
-            self.metrics = {
-                "context": payload.get("context_tokens_estimate", self.metrics.get("context", "n/a")),
-                "vram": ((payload.get("hardware_usage") or {}).get("vram_peak_mb", self.metrics.get("vram", "n/a"))),
-                "latency": f"{payload.get('latency_ms')} ms" if payload.get("latency_ms") is not None else self.metrics.get("latency", "n/a"),
-            }
+            self._update_metrics(payload)
+            assistant_text = _trim_block(str(payload.get("content", "")), 2800)
             tool_calls = payload.get("tool_calls") or []
-            if self.assistant.strip():
-                self._add_transcript("assistant", "message", self.assistant)
-            self._add_event(f"assistant replied ({len(tool_calls)} tool calls)")
+            self.activity = "running tools" if tool_calls else "assistant responded"
+            if assistant_text.strip():
+                self._push_block("assistant", "Assistant", assistant_text)
+            self._add_audit(f"assistant replied ({len(tool_calls)} tool calls)")
             self._render()
             return
         if event_type == "tool_call":
-            self._add_event(f"tool call: {payload.get('tool_name')} {json.dumps(payload.get('arguments', {}), ensure_ascii=True)}")
-            tool_body = json.dumps(payload.get("arguments", {}), ensure_ascii=True)
-            self._add_transcript("assistant", f"tool-use {payload.get('tool_name')}", tool_body)
+            tool_name = str(payload.get("tool_name", "tool"))
+            tool_call_id = payload.get("tool_call_id")
+            arguments = json.dumps(payload.get("arguments", {}), ensure_ascii=True)
+            self.activity = f"running {tool_name}"
+            block = self._push_block(
+                "tool",
+                f"Tool: {tool_name}",
+                "",
+                status="running",
+                meta={"tool_name": tool_name, "tool_call_id": tool_call_id, "input": arguments, "result": "Running..."},
+            )
+            if tool_call_id:
+                self.pending_tools[tool_call_id] = block
+            self._add_audit(f"tool started: {tool_name}")
             self._render()
             return
         if event_type == "tool_result":
+            self._update_metrics(payload)
             result = payload.get("result") or {}
+            tool_name = str(payload.get("tool_name", "tool"))
+            tool_call_id = payload.get("tool_call_id") or result.get("tool_call_id")
             status = "ok" if payload.get("ok") else "error"
-            detail = result.get("summary") or result.get("error") or result.get("content") or ""
-            if not isinstance(detail, str):
-                detail = json.dumps(detail, ensure_ascii=True)
-            self._add_event(f"tool result: {payload.get('tool_name')} [{status}] {detail[:120]}")
-            self._add_transcript("user", f"tool-result {payload.get('tool_name')}", _trim_block(detail, 800), status=status)
+            block = self._find_pending_tool(tool_call_id, tool_name)
+            detail = self._summarize_tool_result(result)
+            if block is None:
+                block = self._push_block(
+                    "tool",
+                    f"Tool: {tool_name}",
+                    "",
+                    status=status,
+                    meta={"tool_name": tool_name, "tool_call_id": tool_call_id, "input": "", "result": detail},
+                )
+            else:
+                block["status"] = status
+                block["meta"]["status"] = status
+                block["meta"]["result"] = detail
+            self.activity = "waiting for model continuation"
+            self._add_audit(f"tool finished: {tool_name} [{status}]")
             self._render()
             return
         if event_type == "tool_retry":
-            self._add_event(f"retry: {payload.get('reason')}")
+            self.activity = "repairing tool call"
+            self._add_audit(f"retry: {payload.get('reason')}")
             self._render()
             return
         if event_type == "repair_prompt":
-            self._add_event(f"repair: {payload.get('reason')}")
+            self.activity = "repair prompt issued"
+            self._add_audit(f"repair: {payload.get('reason')}")
             self._render()
             return
         if event_type == "mid_task_injection":
-            self._add_event(f"injection: {str(payload.get('content', ''))[:120]}")
-            self._add_transcript("user", "injection", _trim_block(str(payload.get("content", "")), 600))
+            self.activity = "received user update"
+            self._add_audit("injection delivered")
+            self._push_block("user", "User", _trim_block(str(payload.get("content", "")), 900))
             self._render()
             return
         if event_type == "verification":
-            result = payload.get("result") or {}
-            text = json.dumps(result, ensure_ascii=True)
-            self.verification = f"{payload.get('method')} -> {'pass' if payload.get('verification_passed') else 'fail'}\n{text}"
-            self._add_event(f"verification: {'pass' if payload.get('verification_passed') else 'fail'}")
-            self._add_transcript("user", "verification", self.verification, status="pass" if payload.get("verification_passed") else "fail")
+            self.activity = "verifying"
+            self._add_audit(f"verification: {'pass' if payload.get('verification_passed') else 'fail'}")
+            self._render()
+            return
+        if event_type == "turn_metrics":
+            self._update_metrics(payload)
+            self.activity = "turn complete"
+            self._add_audit(
+                f"turn metrics: ttft={payload.get('ttft_ms', 'n/a')} ms, "
+                f"tps={payload.get('tokens_per_second', 'n/a')}"
+            )
             self._render()
             return
         if event_type in {"timeout", "final_result"}:
-            self.final = json.dumps(payload, ensure_ascii=True)
-            self._add_event(f"final: {payload.get('status', event_type)}")
-            self._add_transcript("assistant", "final", self.final, status=str(payload.get("status", event_type)))
+            self.activity = str(payload.get("status", event_type))
+            self._add_audit(f"final: {payload.get('status', event_type)}")
             self._render()
             print()
             return
