@@ -82,7 +82,7 @@ body { font-family: var(--font-sans); }
 .header h1 { font-size: 18px; font-weight: 600; color: var(--color-text-primary); }
 .header .sub { font-size: 11px; color: var(--color-text-secondary); margin-top: 4px; }
 .section-label { font-size: 11px; font-weight: 500; color: var(--color-text-tertiary); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
-.metric-grid { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 8px; margin-bottom: 1.5rem; }
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px,1fr)); gap: 8px; margin-bottom: 1.5rem; }
 .mcard { background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 0.75rem 1rem; }
 .mcard .val { font-size: 20px; font-weight: 500; color: var(--color-text-primary); }
 .mcard .lbl { font-size: 11px; color: var(--color-text-secondary); margin-top: 2px; }
@@ -216,11 +216,14 @@ $acc_legend
         <tr>
           <th>Cache type</th>
           <th>Compression</th>
+          <th>Prompt (t/s)</th>
+          <th>Gen (t/s)</th>
           <th>Gen tok/s (t1)</th>
           <th>Gen tok/s ($num_turns)</th>
           <th>Degradation</th>
           <th>TTFT t1 (ms)</th>
           <th>TTFT $num_turns (ms)</th>
+          <th>Context MiB</th>
           <th>VRAM peak (MB)</th>
           <th>Tool accuracy</th>
         </tr>
@@ -701,6 +704,8 @@ def detect_benchmark_mode(results_dir: Path) -> str | None:
 def extract_metrics(data):
     """Pull summary metrics from a single cache type run."""
     turns = data.get("turns", [])
+    meta = data.get("meta", {})
+    throughput_benchmark = meta.get("throughput_benchmark", {}) or {}
     tps_list = [t.get("tps", 0) for t in turns if t.get("tps", 0) > 0]
     ttft_list = [t.get("ttft_ms") for t in turns if t.get("ttft_ms") is not None]
     acc_list = [t.get("tool_accuracy_pct") for t in turns if t.get("tool_accuracy_pct") is not None]
@@ -716,6 +721,9 @@ def extract_metrics(data):
     degradation = round(100 * (tn_tps - t1_tps) / t1_tps, 1) if t1_tps else 0
 
     return {
+        "prompt_tps_bench": throughput_benchmark.get("prompt_tokens_per_second"),
+        "gen_tps_bench": throughput_benchmark.get("generation_tokens_per_second"),
+        "throughput_available": bool(throughput_benchmark.get("available")),
         "tps_t1": round(t1_tps, 2),
         "tps_tn": round(tn_tps, 2),
         "tps_all": [round(v, 2) for v in tps_list],
@@ -944,8 +952,18 @@ def build_html(by_cache, model_name, timestamp, system_prompt_summary="system pr
     metric_cards = "\n".join(
         [
             f"""    <div class="mcard">
+      <div class="val">{format_num(hero_m["prompt_tps_bench"]) if hero_m["prompt_tps_bench"] is not None else 'n/a'}</div>
+      <div class="lbl">Prompt (t/s)</div>
+      <div class="sub {'good' if hero_m['prompt_tps_bench'] is not None else 'warn'}">llama-bench prompt processing</div>
+    </div>""",
+            f"""    <div class="mcard">
+      <div class="val">{format_num(hero_m["gen_tps_bench"]) if hero_m["gen_tps_bench"] is not None else 'n/a'}</div>
+      <div class="lbl">Gen (t/s)</div>
+      <div class="sub {'good' if hero_m['gen_tps_bench'] is not None else 'warn'}">llama-bench token generation</div>
+    </div>""",
+            f"""    <div class="mcard">
       <div class="val">{format_num(hero_m["tps_t1"])}</div>
-      <div class="lbl">tok/s {escape(hero)}</div>
+      <div class="lbl">runtime tok/s {escape(hero)}</div>
       <div class="sub {deg_class(hero_m["tps_t1"] - speed_compare_m["tps_t1"])}">vs {format_num(speed_compare_m["tps_t1"])} {escape(speed_compare)}</div>
     </div>""",
             f"""    <div class="mcard">
@@ -1021,11 +1039,14 @@ def build_html(by_cache, model_name, timestamp, system_prompt_summary="system pr
             f"""        <tr{row_class}>
           <td>{emphasis[0]}{escape(cache)}{emphasis[1]}</td>
           <td>{emphasis[0]}{(format_num(float(cache_compression(cache)), 1) + '&times;') if cache_compression(cache) != 'n/a' else 'n/a'}{emphasis[1]}</td>
+          <td>{emphasis[0]}{format_num(m["prompt_tps_bench"]) if m["prompt_tps_bench"] is not None else 'n/a'}{emphasis[1]}</td>
+          <td>{emphasis[0]}{format_num(m["gen_tps_bench"]) if m["gen_tps_bench"] is not None else 'n/a'}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["tps_t1"])}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["tps_tn"])}{emphasis[1]}</td>
           <td class="{deg_class(m['degradation'])}">{emphasis[0]}{format_pct(m["degradation"])}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["ttft_t1"], 0)}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["ttft_tn"], 0)}{emphasis[1]}</td>
+          <td>{emphasis[0]}{format_num(m["vram_peak"] / 1024.0, 2)}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["vram_peak"], 0)}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_pct(m["acc_avg"])}{emphasis[1]}</td>
         </tr>"""
@@ -2183,6 +2204,34 @@ def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
     def agg(cache: str) -> dict:
         return by_cache[cache].get("aggregate", {})
 
+    def turn_metrics(turn: dict) -> dict:
+        return turn.get("metrics") or {}
+
+    def cumulative_token_series(cache: str) -> list[int | None]:
+        running_total = 0
+        values: list[int | None] = []
+        for turn in by_cache[cache].get("turns", []):
+            metrics = turn_metrics(turn)
+            cumulative = metrics.get("provider_usage_cumulative_total")
+            if cumulative is not None:
+                try:
+                    running_total = int(cumulative)
+                except Exception:
+                    running_total = running_total
+                values.append(running_total)
+                continue
+            per_turn = metrics.get("provider_usage_total")
+            if per_turn is None:
+                values.append(None)
+                continue
+            try:
+                running_total += int(per_turn)
+            except Exception:
+                values.append(None)
+                continue
+            values.append(running_total)
+        return values
+
     def cache_turn_map(cache: str) -> dict:
         return {
             str(turn.get("turn_id", turn.get("turn", "?"))): turn
@@ -2197,6 +2246,7 @@ def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
         pass_rate = float(summary.get("pass_rate", 0) or 0)
         elapsed = float(summary.get("session_elapsed_s", 0) or 0)
         vram_peak = float(((summary.get("final_hardware") or {}).get("vram_peak_mb", 0)) or 0)
+        total_tokens = int(summary.get("provider_usage_total_tokens", 0) or 0)
         delta_score = avg_score - float(baseline_agg.get("average_score", 0) or 0)
         table_rows.append(
             "<tr>"
@@ -2205,6 +2255,7 @@ def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
             f"<td>{format_pct(pass_rate * 100, 1)}</td>"
             f"<td>{int(summary.get('pass_count', 0) or 0)}/{int(meta.get('total_turns', 0) or len(turn_labels))}</td>"
             f"<td>{format_num(elapsed, 1)}</td>"
+            f"<td>{format_num(total_tokens, 0)}</td>"
             f"<td>{format_num(vram_peak, 0)}</td>"
             f"<td class='{delta_class(delta_score)}'>{format_delta(delta_score)}</td>"
             "</tr>"
@@ -2237,12 +2288,15 @@ def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
 
     vram_datasets = []
     ttft_datasets = []
+    token_datasets = []
+    ttft_token_datasets = []
     for cache in ordered:
         turns_for_cache = by_cache[cache].get("turns", [])
+        cumulative_tokens = cumulative_token_series(cache)
         vram_datasets.append(
             {
                 "label": cache,
-                "data": [((turn.get("metrics") or {}).get("hardware") or {}).get("vram_peak_mb") for turn in turns_for_cache],
+                "data": [((turn_metrics(turn).get("hardware") or {}).get("vram_peak_mb")) for turn in turns_for_cache],
                 "borderColor": cache_color(cache),
                 "backgroundColor": "transparent",
                 "borderWidth": 3 if cache == baseline else 2,
@@ -2254,13 +2308,43 @@ def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
         ttft_datasets.append(
             {
                 "label": cache,
-                "data": [((turn.get("metrics") or {}).get("ttft_ms")) for turn in turns_for_cache],
+                "data": [turn_metrics(turn).get("ttft_ms") for turn in turns_for_cache],
                 "borderColor": cache_color(cache),
                 "backgroundColor": "transparent",
                 "borderWidth": 3 if cache == baseline else 2,
                 "pointRadius": 2,
                 "spanGaps": True,
                 "tension": 0.25,
+            }
+        )
+        token_datasets.append(
+            {
+                "label": cache,
+                "data": cumulative_tokens,
+                "borderColor": cache_color(cache),
+                "backgroundColor": "transparent",
+                "borderWidth": 3 if cache == baseline else 2,
+                "pointRadius": 2,
+                "spanGaps": True,
+                "tension": 0.25,
+            }
+        )
+        ttft_token_datasets.append(
+            {
+                "label": cache,
+                "data": [
+                    {
+                        "x": cumulative_tokens[index] if index < len(cumulative_tokens) else None,
+                        "y": turn_metrics(turn).get("ttft_ms"),
+                    }
+                    for index, turn in enumerate(turns_for_cache)
+                    if (index < len(cumulative_tokens) and cumulative_tokens[index] is not None and turn_metrics(turn).get("ttft_ms") is not None)
+                ],
+                "borderColor": cache_color(cache),
+                "backgroundColor": cache_color(cache),
+                "pointRadius": 4 if cache == baseline else 3,
+                "pointHoverRadius": 5,
+                "showLine": False,
             }
         )
 
@@ -2334,9 +2418,9 @@ td.delta-down {{ background: rgba(180,35,24,0.06); }}
   <section class="panel-grid">
     <div class="panel">
       <h2 class="section-title">Cache leaderboard</h2>
-      <p class="section-sub">Session score, pass rate, elapsed time, and VRAM peak by quant.</p>
+      <p class="section-sub">Session score, pass rate, elapsed time, token use, and VRAM peak by quant.</p>
       <table>
-        <tr><th>Cache</th><th>Avg score</th><th>Pass rate</th><th>Passes</th><th>Time (s)</th><th>VRAM peak</th><th>Delta vs {escape(baseline)}</th></tr>
+        <tr><th>Cache</th><th>Avg score</th><th>Pass rate</th><th>Passes</th><th>Time (s)</th><th>Total tokens</th><th>VRAM peak</th><th>Delta vs {escape(baseline)}</th></tr>
         {''.join(table_rows)}
       </table>
     </div>
@@ -2355,6 +2439,16 @@ td.delta-down {{ background: rgba(180,35,24,0.06); }}
     <h2 class="section-title">TTFT through session turns</h2>
     <p class="section-sub">Time to first token by turn across all compared cache quants.</p>
     <div class="chart-shell"><canvas id="ttftTurnChart"></canvas></div>
+  </section>
+  <section class="panel chart-panel">
+    <h2 class="section-title">Token count through session turns</h2>
+    <p class="section-sub">Cumulative provider token usage as the persistent transcript grows.</p>
+    <div class="chart-shell"><canvas id="tokenTurnChart"></canvas></div>
+  </section>
+  <section class="panel chart-panel">
+    <h2 class="section-title">TTFT over total token use</h2>
+    <p class="section-sub">Each point shows turn TTFT against cumulative session token usage for that cache quant.</p>
+    <div class="chart-shell"><canvas id="ttftTokenChart"></canvas></div>
   </section>
   <section class="panel chart-panel">
     <h2 class="section-title">Turn score delta matrix</h2>
@@ -2388,8 +2482,25 @@ function makeLine(id, labels, datasets, yTitle) {{
     }}
   }});
 }}
+function makeScatter(id, datasets, xTitle, yTitle) {{
+  new Chart(document.getElementById(id), {{
+    type: 'scatter',
+    data: {{ datasets }},
+    options: {{
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {{ legend: {{ display: true }} }},
+      scales: {{
+        x: {{ ticks: {{ color: tickColor, font: tickFont }}, grid: {{ color: gridColor }}, title: {{ display: true, text: xTitle, color: tickColor, font: {{ size: 11 }} }} }},
+        y: {{ ticks: {{ color: tickColor, font: tickFont }}, grid: {{ color: gridColor }}, title: {{ display: true, text: yTitle, color: tickColor, font: {{ size: 11 }} }} }}
+      }}
+    }}
+  }});
+}}
 makeLine('vramTurnChart', {json.dumps(turn_labels)}, {json.dumps(vram_datasets)}, 'VRAM peak (MB)');
 makeLine('ttftTurnChart', {json.dumps(turn_labels)}, {json.dumps(ttft_datasets)}, 'TTFT (ms)');
+makeLine('tokenTurnChart', {json.dumps(turn_labels)}, {json.dumps(token_datasets)}, 'Cumulative tokens');
+makeScatter('ttftTokenChart', {json.dumps(ttft_token_datasets)}, 'Cumulative tokens', 'TTFT (ms)');
 </script>
 </body></html>"""
 

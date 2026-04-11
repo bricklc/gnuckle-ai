@@ -1106,6 +1106,10 @@ SERVER_NAMES = [
     "llama-server", "llama-server.exe",
     "server", "server.exe",
 ]
+BENCH_NAMES = [
+    "llama-bench", "llama-bench.exe",
+    "bench", "bench.exe",
+]
 SERVER_SEARCH_DIRS = [
     ".", "build/bin", "build/bin/Release", "build/bin/Debug",
     "bin", "build",
@@ -1122,6 +1126,143 @@ def find_server(base_dir: Path):
             if candidate.is_file():
                 return candidate
     return None
+
+
+def _search_binary(base_dirs: list[Path], names: list[str]):
+    seen = set()
+    for base_dir in base_dirs:
+        try:
+            resolved = str(base_dir.resolve())
+        except OSError:
+            resolved = str(base_dir)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        for sub in SERVER_SEARCH_DIRS:
+            d = base_dir / sub
+            if not d.is_dir():
+                continue
+            for name in names:
+                candidate = d / name
+                if candidate.is_file():
+                    return candidate
+    return None
+
+
+def find_bench(server_path: Path):
+    """Find llama-bench near the selected llama-server binary."""
+    roots = [server_path.parent]
+    if server_path.parent.parent != server_path.parent:
+        roots.append(server_path.parent.parent)
+    if server_path.parent.parent.parent != server_path.parent.parent:
+        roots.append(server_path.parent.parent.parent)
+    return _search_binary(roots, BENCH_NAMES)
+
+
+def parse_llama_bench_output(output: str) -> dict:
+    """Extract prompt and generation throughput from llama-bench text output."""
+    import re
+
+    metrics = {
+        "prompt_tokens_per_second": None,
+        "generation_tokens_per_second": None,
+        "prompt_label": None,
+        "generation_label": None,
+    }
+    lines = [line.strip() for line in str(output or "").splitlines() if line.strip()]
+    row_re = re.compile(r"\b(?P<label>(?:pp|tg)\d+)\b")
+    num_re = re.compile(r"[-+]?\d[\d,]*\.?\d*")
+
+    for line in lines:
+        match = row_re.search(line)
+        if not match:
+            continue
+        label = match.group("label")
+        numbers = []
+        for token in num_re.findall(line):
+            try:
+                numbers.append(float(token.replace(",", "")))
+            except ValueError:
+                continue
+        if not numbers:
+            continue
+        rate = numbers[-1]
+        if label.startswith("pp") and metrics["prompt_tokens_per_second"] is None:
+            metrics["prompt_tokens_per_second"] = rate
+            metrics["prompt_label"] = label
+        elif label.startswith("tg") and metrics["generation_tokens_per_second"] is None:
+            metrics["generation_tokens_per_second"] = rate
+            metrics["generation_label"] = label
+    return metrics
+
+
+def collect_llama_bench_metrics(server_path: Path, model_path: Path, cache_k: str, cache_v: str, preset=None, split_config=None) -> dict:
+    """Run llama-bench if available and return prompt/gen throughput snapshot."""
+    preset = preset or select_preset(model_path)
+    split_config = split_config or {}
+    bench_path = find_bench(server_path)
+    metrics = {
+        "available": False,
+        "bench_path": str(bench_path) if bench_path else None,
+        "prompt_tokens_per_second": None,
+        "generation_tokens_per_second": None,
+        "prompt_label": None,
+        "generation_label": None,
+        "raw_output": None,
+        "error": None,
+    }
+    if bench_path is None:
+        metrics["error"] = "llama-bench binary not found"
+        return metrics
+
+    split_mode = split_config.get("split_mode", "layer")
+    main_gpu = split_config.get("main_gpu", 0)
+    tensor_split = split_config.get("tensor_split")
+    cmd = [
+        str(bench_path),
+        "-m", str(model_path),
+        "-ngl", "99",
+        "--split-mode", str(split_mode),
+        "--main-gpu", str(main_gpu),
+        "--cache-type-k", cache_k,
+        "--cache-type-v", cache_v,
+        "-p", "512",
+        "-n", "128",
+        "-r", "1",
+    ]
+    if tensor_split:
+        cmd.extend(["--tensor-split", str(tensor_split)])
+    cmd.extend(build_llama_args(preset.get("server_args", {})))
+
+    try:
+        completed = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=600,
+            check=False,
+        )
+    except Exception as exc:
+        metrics["error"] = str(exc)
+        return metrics
+
+    raw_output = ((completed.stdout or "") + "\n" + (completed.stderr or "")).strip()
+    metrics["raw_output"] = raw_output[:4000]
+    if completed.returncode != 0:
+        metrics["error"] = f"llama-bench failed with exit code {completed.returncode}"
+        return metrics
+
+    parsed = parse_llama_bench_output(raw_output)
+    metrics.update(parsed)
+    metrics["available"] = bool(
+        parsed.get("prompt_tokens_per_second") is not None
+        or parsed.get("generation_tokens_per_second") is not None
+    )
+    if not metrics["available"]:
+        metrics["error"] = "unable to parse llama-bench output"
+    return metrics
 
 def prompt_gguf_selection(gguf_files):
     print("\n  Available GGUF files (ape see banana pile):\n")
@@ -1433,7 +1574,7 @@ def call_with_metrics(client, messages, port, preset=None, base_url: str | None 
 
 # ── SINGLE CACHE-TYPE RUN ─────────────────────────────────────────────────────
 def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, preset=None, system_prompt=None,
-                       system_prompt_source="custom_inline", split_config=None):
+                       system_prompt_source="custom_inline", split_config=None, throughput_benchmark=None):
     base_url = DEFAULT_BASE_URL.format(port=port)
     client   = OpenAI(base_url=base_url, api_key=API_KEY)
     exact_available = probe_llamacpp_exact(base_url)
@@ -1459,6 +1600,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "measured_label": prompt_counts["measured_label"],
             "token_counting": token_counting_info(exact_available=exact_available),
             "split_config": split_config,
+            "throughput_benchmark": throughput_benchmark or {},
         },
         "turns": [],
         "aggregate": {
@@ -1482,8 +1624,13 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "peak_context_tokens_heuristic": 0,
             "peak_context_tokens_tokenizer": 0,
             "peak_context_tokens_measured": None,
+            "prompt_tokens_per_second_bench": None,
+            "generation_tokens_per_second_bench": None,
         },
     }
+    if throughput_benchmark:
+        results["aggregate"]["prompt_tokens_per_second_bench"] = throughput_benchmark.get("prompt_tokens_per_second")
+        results["aggregate"]["generation_tokens_per_second_bench"] = throughput_benchmark.get("generation_tokens_per_second")
 
     messages = [
         {
@@ -2458,6 +2605,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
             label   = cfg["label"]
             cache_k = cfg["cache_k"]
             cache_v = cfg["cache_v"]
+            throughput_benchmark = {}
 
             render_progress(f"cache run {i + 1}/{len(cache_configs)} ({label})", i, len(cache_configs), done=False)
             print_header(f"Run {i+1}/{len(cache_configs)}: {label}  (cache-k={cache_k} cache-v={cache_v})")
@@ -2485,6 +2633,26 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                 ape_print("error")
                 kill_server(server_proc)
                 continue
+
+            throughput_benchmark = collect_llama_bench_metrics(
+                server_path=server_path,
+                model_path=model_path,
+                cache_k=cache_k,
+                cache_v=cache_v,
+                preset=preset,
+                split_config=split_config,
+            )
+            if throughput_benchmark.get("available"):
+                print_step(
+                    "llama-bench: "
+                    f"prompt={throughput_benchmark.get('prompt_tokens_per_second')} t/s "
+                    f"gen={throughput_benchmark.get('generation_tokens_per_second')} t/s"
+                )
+            else:
+                print_step(
+                    "llama-bench unavailable: "
+                    f"{throughput_benchmark.get('error', 'unknown error')}"
+                )
 
             out = None
             try:
@@ -2529,6 +2697,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                                 # Save with cache label
                                 session_path = output_path / f"session_{bench['id']}_{sanitize_label(label)}.json"
                                 session_out["meta"]["cache_label"] = label
+                                session_out["meta"]["throughput_benchmark"] = throughput_benchmark
                                 session_path.write_text(json.dumps(session_out, indent=2, default=str), encoding="utf-8")
                                 print_step(f"session benchmark saved: {session_path.name}")
                             except Exception as se:
@@ -2554,6 +2723,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                                 observer=session_observer,
                             )
                             session_out["meta"]["cache_label"] = label
+                            session_out["meta"]["throughput_benchmark"] = throughput_benchmark
                             session_path = output_path / f"session_{bench['id']}_{sanitize_label(label)}.json"
                             session_path.write_text(json.dumps(session_out, indent=2, default=str), encoding="utf-8")
                             out = session_path
@@ -2572,6 +2742,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                         system_prompt=system_prompt,
                         system_prompt_source=system_prompt_source,
                         split_config=split_config,
+                        throughput_benchmark=throughput_benchmark,
                     )
                 if out is not None:
                     output_files.append(out)

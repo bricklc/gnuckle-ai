@@ -572,6 +572,7 @@ def run_session_benchmark(
         max_tool_rounds = 10
         assistant_text = ""
         last_usage = empty_usage()
+        turn_provider_usage = empty_usage()
         retry_count = 0
         initial_no_response = False
         no_response = False
@@ -593,6 +594,7 @@ def run_session_benchmark(
 
             message_usage = update_usage(empty_usage(), getattr(response, "usage", None))
             last_usage = message_usage
+            turn_provider_usage = accumulate_usage(turn_provider_usage, message_usage)
             total_provider_usage = accumulate_usage(total_provider_usage, message_usage)
             total_output_tokens += int((message_usage or {}).get("output_tokens", 0) or 0)
 
@@ -773,6 +775,8 @@ def run_session_benchmark(
         )
         tokens_per_second = round(total_output_tokens / max(turn_elapsed_ms / 1000.0, 0.001), 2)
         turn_invalid_events = [event for event in invalid_execution_events if event["turn_id"] == turn_id]
+        turn_provider_tokens = usage_total_tokens(turn_provider_usage)
+        cumulative_provider_tokens = usage_total_tokens(total_provider_usage)
 
         turn_result = {
             "turn": turn_num,
@@ -794,7 +798,8 @@ def run_session_benchmark(
                 "tokens_per_second": tokens_per_second,
                 "context_tokens_estimate": context_estimate,
                 "context_tokens_heuristic": context_counts["heuristic"],
-                "provider_usage_total": usage_total_tokens(last_usage),
+                "provider_usage_total": turn_provider_tokens,
+                "provider_usage_cumulative_total": cumulative_provider_tokens,
                 "hardware": hardware,
                 "tool_correctness": round(
                     1.0 - (len(scores["extra_tools"]) + len(scores["missing_tools"]) + len(hallucinated_tools))
@@ -820,6 +825,8 @@ def run_session_benchmark(
                     "latency_ms": turn_elapsed_ms,
                     "tokens_per_second": tokens_per_second,
                     "context_tokens_estimate": context_estimate,
+                    "provider_usage_total": turn_provider_tokens,
+                    "provider_usage_cumulative_total": cumulative_provider_tokens,
                     "hardware_usage": hardware,
                 },
             )
@@ -858,6 +865,7 @@ def run_session_benchmark(
             "initial_hardware": initial_hardware,
             "final_hardware": final_hardware,
             "provider_usage_total": total_provider_usage,
+            "provider_usage_total_tokens": usage_total_tokens(total_provider_usage),
             "invalid_execution_count": len(invalid_execution_events),
             "no_response_turn_count": sum(1 for turn in turn_results if turn.get("no_response")),
         },

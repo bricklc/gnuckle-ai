@@ -133,6 +133,11 @@ class SessionRunnerTests(unittest.TestCase):
         self.assertIn("tool_result", kinds)
         self.assertEqual(result["session"]["state"]["files"]["notes.txt"], "beta")
         self.assertEqual(result["turns"][1]["assistant_text"], "notes.txt now says beta.")
+        self.assertEqual(result["turns"][0]["metrics"]["provider_usage_total"], 10)
+        self.assertEqual(result["turns"][0]["metrics"]["provider_usage_cumulative_total"], 10)
+        self.assertEqual(result["turns"][1]["metrics"]["provider_usage_total"], 10)
+        self.assertEqual(result["turns"][1]["metrics"]["provider_usage_cumulative_total"], 20)
+        self.assertEqual(result["aggregate"]["provider_usage_total_tokens"], 20)
         self.assertTrue(any(event_type == "tool_result" for event_type, _payload in observer_events))
 
     def test_invalid_tool_stays_in_band_and_counts_as_invalid_execution(self) -> None:
