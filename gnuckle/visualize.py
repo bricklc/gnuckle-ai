@@ -2272,6 +2272,7 @@ def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
         format_obedience = float(summary.get("format_obedience_rate", 0) or 0)
         semantic_gap_turns = int(summary.get("literal_semantic_gap_turn_count", 0) or 0)
         unsupported_claims = int(summary.get("unsupported_claim_count", 0) or 0)
+        recovery_tries = int(summary.get("recovery_try_count", 0) or 0)
         delta_score = avg_score - float(baseline_agg.get("average_score", 0) or 0)
         table_rows.append(
             "<tr>"
@@ -2284,6 +2285,7 @@ def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
             f"<td>{format_pct(format_obedience * 100, 1)}</td>"
             f"<td>{semantic_gap_turns}</td>"
             f"<td>{unsupported_claims}</td>"
+            f"<td>{recovery_tries}</td>"
             f"<td>{format_num(vram_peak, 0)}</td>"
             f"<td class='{delta_class(delta_score)}'>{format_delta(delta_score)}</td>"
             "</tr>"
@@ -2446,15 +2448,15 @@ td.delta-down {{ background: rgba(180,35,24,0.06); }}
   <section class="panel-grid">
     <div class="panel">
       <h2 class="section-title">Cache leaderboard</h2>
-      <p class="section-sub">Session score, pass rate, elapsed time, token use, formatting obedience, semantic-gap count, unsupported claims, and VRAM peak by quant.</p>
+      <p class="section-sub">Session score, pass rate, elapsed time, token use, formatting obedience, semantic-gap count, unsupported claims, recovery tries, and VRAM peak by quant.</p>
       <table>
-        <tr><th>Cache</th><th>Avg score</th><th>Pass rate</th><th>Passes</th><th>Time (s)</th><th>Total tokens</th><th>Fmt obey</th><th>Lit→Sem gaps</th><th>Unsupported</th><th>VRAM peak</th><th>Delta vs {escape(baseline)}</th></tr>
+        <tr><th>Cache</th><th>Avg score</th><th>Pass rate</th><th>Passes</th><th>Time (s)</th><th>Total tokens</th><th>Fmt obey</th><th>Lit→Sem gaps</th><th>Unsupported</th><th>Recovery tries</th><th>VRAM peak</th><th>Delta vs {escape(baseline)}</th></tr>
         {''.join(table_rows)}
       </table>
     </div>
     <div class="panel">
       <h2 class="section-title">Rubric signals</h2>
-      <p class="section-sub">`Fmt obey` is average response-format obedience across turns. `Lit→Sem gaps` counts turns where the model missed a raw literal string but matched the same expected fact after normalization. `Unsupported` counts stateful claims made on turns that required inspection but skipped the required grounding tools.</p>
+      <p class="section-sub">`Fmt obey` is average response-format obedience across turns. `Lit→Sem gaps` counts turns where the model missed a raw literal string but matched the same expected fact after normalization. `Unsupported` counts stateful claims made on turns that required inspection but skipped the required grounding tools. `Recovery tries` counts correction-loop retries before the runner advanced.</p>
       <p class="section-sub">Those signals help separate factual failure, rubric brittleness, and groundedness failure before sending a run to a secondary LLM reviewer.</p>
     </div>
   </section>

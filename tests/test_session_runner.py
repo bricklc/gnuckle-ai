@@ -410,6 +410,73 @@ class SessionRunnerTests(unittest.TestCase):
         self.assertEqual(result["aggregate"]["memory_only_tool_violation_turn_count"], 1)
         self.assertIn("Used tools on a memory-only turn.", result["turns"][0]["scores"]["score_notes"])
 
+    def test_failure_branch_retries_same_turn_until_corrected(self) -> None:
+        benchmark = {
+            "id": "bench",
+            "title": "Bench",
+            "type": "session",
+            "system_prompt": "sys",
+            "tools": ["echo"],
+            "turns": [
+                {
+                    "id": "t01",
+                    "prompt": "What is the current tracker?",
+                    "active_tools": [],
+                    "max_recovery_tries": 2,
+                    "failure_branches": [
+                        {
+                            "trigger": "content_mismatch",
+                            "followup_user_message": "No, I meant the current tracker, not the todo file. Answer directly.",
+                            "max_retries": 1,
+                            "expect_override": {
+                                "response_contains_normalized": ["buy oat milk"],
+                                "scoring_mode": "semantic_recall",
+                                "evidence_mode": "memory_only",
+                            },
+                        }
+                    ],
+                    "expect": {
+                        "response_contains_normalized": ["buy oat milk"],
+                        "scoring_mode": "semantic_recall",
+                        "evidence_mode": "memory_only",
+                        "finish_required": False,
+                    },
+                },
+                {
+                    "id": "t02",
+                    "prompt": "Done?",
+                    "active_tools": [],
+                    "expect": {"response_contains": ["done"], "finish_required": False},
+                },
+            ],
+        }
+
+        FakeOpenAI.responses = [
+            fake_response(content="- Fix login bug"),
+            fake_response(content="- buy oat milk"),
+            fake_response(content="done"),
+        ]
+
+        with (
+            patch("gnuckle.session_runner.OpenAI", FakeOpenAI),
+            patch("gnuckle.session_runner.estimate_context_token_counts", return_value={"measured": 40, "heuristic": 40}),
+            patch("gnuckle.session_runner.get_hardware_snapshot", return_value={"vram_peak_mb": 1000}),
+            patch("gnuckle.session_runner.empty_usage", return_value={"output_tokens": 0}),
+            patch("gnuckle.session_runner.update_usage", side_effect=lambda current, usage: usage or {"output_tokens": 0}),
+            patch("gnuckle.session_runner.accumulate_usage", side_effect=lambda total, usage: {"output_tokens": (total or {}).get("output_tokens", 0) + (usage or {}).get("output_tokens", 0)}),
+            patch("gnuckle.session_runner.usage_total_tokens", side_effect=lambda usage: (usage or {}).get("output_tokens", 0)),
+        ):
+            result = run_session_benchmark(benchmark, base_url="http://localhost:8080/v1")
+
+        self.assertEqual(len(result["turns"]), 2)
+        self.assertEqual(result["turns"][0]["recovery_tries"], 1)
+        self.assertTrue(result["turns"][0]["recovery_resolved"])
+        self.assertFalse(result["turns"][0]["recovery_loop_exhausted"])
+        self.assertEqual(result["turns"][0]["assistant_text"], "- buy oat milk")
+        self.assertEqual(result["aggregate"]["recovery_try_count"], 1)
+        transcript_kinds = [entry["kind"] for entry in result["session"]["transcript"]]
+        self.assertIn("correction_prompt", transcript_kinds)
+
 
 if __name__ == "__main__":
     unittest.main()

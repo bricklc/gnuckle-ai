@@ -31,6 +31,7 @@ MODEL = "local-model"
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent / "benchmarks"
 DEFAULT_BENCHMARK_DATE = "2026-04-10"
 MAX_NO_RESPONSE_RETRIES = 2
+DEFAULT_MAX_RECOVERY_TRIES = 2
 
 
 @dataclass
@@ -93,22 +94,55 @@ def normalize_benchmark_definition(data: dict) -> dict:
     standing_rules = session_block.get("standing_rules") or data.get("standing_rules") or []
     initial_state = session_block.get("initial_state") or {}
 
-    normalized_turns = []
-    for index, turn in enumerate(data.get("turns", []), start=1):
-        expect = dict(turn.get("expect") or turn.get("expectations") or {})
+    def normalize_expect_block(expect_block: dict) -> dict:
+        expect = dict(expect_block or {})
         response_expect = dict(expect.get("response") or {})
         tool_expect = dict(expect.get("tool_usage") or {})
         session_expect = dict(expect.get("session") or {})
-
-        finish_required = bool(
+        finish_required_local = bool(
             session_expect.get("must_finish")
             if "must_finish" in session_expect
             else expect.get("finish_required", False)
         )
+        return {
+            "tools_called": tool_expect.get("must_call", expect.get("tools_called", [])),
+            "tools_not_called": tool_expect.get("must_not_call", expect.get("tools_not_called", [])),
+            "tool_order": tool_expect.get("ordered_calls", expect.get("tool_order", [])),
+            "finish_required": finish_required_local,
+            "response_contains": response_expect.get("must_contain", expect.get("response_contains", [])),
+            "response_contains_literal": response_expect.get("must_contain_literal", expect.get("response_contains_literal", [])),
+            "response_contains_normalized": response_expect.get("must_contain_normalized", expect.get("response_contains_normalized", [])),
+            "response_format": response_expect.get("format", expect.get("response_format")),
+            "response_format_rules": response_expect.get("rules", expect.get("response_format_rules", [])),
+            "expected_artifacts": expect.get("expected_artifacts", []),
+            "expected_ports": expect.get("expected_ports", []),
+            "expected_dates": expect.get("expected_dates", []),
+            "expected_tracker_items": expect.get("expected_tracker_items", []),
+            "expected_agenda_items": expect.get("expected_agenda_items", []),
+            "expected_categories": expect.get("expected_categories", []),
+            "evidence_mode": expect.get("evidence_mode", "default"),
+            "scoring_mode": expect.get("scoring_mode", "default"),
+            "expect_refusal": expect.get("expect_refusal", False),
+        }
+
+    normalized_turns = []
+    for index, turn in enumerate(data.get("turns", []), start=1):
+        expect = dict(turn.get("expect") or turn.get("expectations") or {})
 
         mock_results = turn.get("mock_results")
         if mock_results is None:
             mock_results = _normalize_mock_tool_results(turn.get("mock_tool_results", []))
+
+        normalized_branches = []
+        for branch in turn.get("failure_branches", []) or []:
+            normalized_branches.append(
+                {
+                    "trigger": str(branch.get("trigger", "") or "").strip(),
+                    "followup_user_message": str(branch.get("followup_user_message", "") or "").strip(),
+                    "max_retries": int(branch.get("max_retries", 1) or 1),
+                    "expect_override": normalize_expect_block(branch.get("expect_override", {})),
+                }
+            )
 
         normalized_turns.append(
             {
@@ -117,26 +151,9 @@ def normalize_benchmark_definition(data: dict) -> dict:
                 "prompt": turn.get("prompt") or turn.get("user_message") or "",
                 "active_tools": turn.get("active_tools") or list(tools),
                 "mock_results": mock_results or {},
-                "expect": {
-                    "tools_called": tool_expect.get("must_call", expect.get("tools_called", [])),
-                    "tools_not_called": tool_expect.get("must_not_call", expect.get("tools_not_called", [])),
-                    "tool_order": tool_expect.get("ordered_calls", expect.get("tool_order", [])),
-                    "finish_required": finish_required,
-                    "response_contains": response_expect.get("must_contain", expect.get("response_contains", [])),
-                    "response_contains_literal": response_expect.get("must_contain_literal", expect.get("response_contains_literal", [])),
-                    "response_contains_normalized": response_expect.get("must_contain_normalized", expect.get("response_contains_normalized", [])),
-                    "response_format": response_expect.get("format", expect.get("response_format")),
-                    "response_format_rules": response_expect.get("rules", expect.get("response_format_rules", [])),
-                    "expected_artifacts": expect.get("expected_artifacts", []),
-                    "expected_ports": expect.get("expected_ports", []),
-                    "expected_dates": expect.get("expected_dates", []),
-                    "expected_tracker_items": expect.get("expected_tracker_items", []),
-                    "expected_agenda_items": expect.get("expected_agenda_items", []),
-                    "expected_categories": expect.get("expected_categories", []),
-                    "evidence_mode": expect.get("evidence_mode", "default"),
-                    "scoring_mode": expect.get("scoring_mode", "default"),
-                    "expect_refusal": expect.get("expect_refusal", False),
-                },
+                "expect": normalize_expect_block(expect),
+                "failure_branches": normalized_branches,
+                "max_recovery_tries": int(turn.get("max_recovery_tries", DEFAULT_MAX_RECOVERY_TRIES) or DEFAULT_MAX_RECOVERY_TRIES),
             }
         )
 
@@ -630,6 +647,45 @@ def _grounding_metrics(expect: dict, actual_tool_calls: list[str], assistant_tex
     }
 
 
+def _detect_failure_triggers(turn_def: dict, scores: dict, actual_tool_calls: list[str]) -> list[str]:
+    triggers: list[str] = []
+    expect = turn_def.get("expect", {})
+    if scores.get("unwanted_tool_violations"):
+        triggers.append("used_forbidden_tools")
+    if expect.get("evidence_mode") == "memory_only" and actual_tool_calls:
+        triggers.append("no_tool_turn_violated")
+    if int(scores.get("unsupported_claim_count", 0) or 0) > 0:
+        triggers.append("answered_from_memory_instead_of_inspecting")
+        if "read_file" in (expect.get("tools_called") or []) and any(tool in actual_tool_calls for tool in ("write_file", "append_file")):
+            triggers.append("rewrote_instead_of_reading")
+    if scores.get("content_recall", 1.0) < 1.0:
+        triggers.append("content_mismatch")
+    if not scores.get("format_correct", True):
+        triggers.append("format_violation")
+    if scores.get("hallucinated_tools"):
+        triggers.append("hallucinated_tools")
+    return list(dict.fromkeys(triggers))
+
+
+def _select_failure_branch(turn_def: dict, detected_triggers: list[str], branch_counts: dict[str, int]) -> dict | None:
+    for branch in turn_def.get("failure_branches", []) or []:
+        trigger = branch.get("trigger")
+        if not trigger or trigger not in detected_triggers:
+            continue
+        if branch_counts.get(trigger, 0) >= int(branch.get("max_retries", 1) or 1):
+            continue
+        return branch
+    return None
+
+
+def _merge_expect(base_expect: dict, override_expect: dict | None) -> dict:
+    merged = dict(base_expect or {})
+    for key, value in (override_expect or {}).items():
+        if value not in (None, [], "", {}):
+            merged[key] = value
+    return merged
+
+
 class MockToolExecutor:
     """Deterministic session tool executor with persistent mocked world state."""
 
@@ -910,223 +966,290 @@ def run_session_benchmark(
 
         if observer is not None:
             observer("turn_start", {"turn": turn_num})
-            observer("model_request", {"attempt": 1, "prompt": prompt})
-
-        messages.append({"role": "user", "content": prompt})
-        _append_transcript_entry(transcript, "user", "prompt", prompt, turn_id=turn_id)
 
         turn_start = time.perf_counter()
+        recovery_tries = 0
+        recovery_history: list[dict] = []
+        recovery_branch_counts: dict[str, int] = {}
+        recovery_resolved = False
+        recovery_loop_exhausted = False
+        active_expect = dict(turn_def.get("expect", {}))
+        current_prompt = prompt
+        current_prompt_kind = "prompt"
+        current_prompt_label = "initial"
         first_response_ms = None
         total_output_tokens = 0
         actual_tools_called: list[str] = []
         hallucinated_tools: list[str] = []
         tool_round = 0
-        max_tool_rounds = 10
         assistant_text = ""
         last_usage = empty_usage()
         turn_provider_usage = empty_usage()
         retry_count = 0
         initial_no_response = False
         no_response = False
+        scores = {}
 
         while True:
-            call_start = time.perf_counter()
-            response = client.chat.completions.create(
-                model=MODEL,
-                messages=messages,
-                tools=tool_defs_by_turn[turn_id],
-                tool_choice="auto",
-                temperature=request_args.get("temperature", 0.6),
-                top_p=request_args.get("top_p", 0.95),
-                max_tokens=request_args.get("max_tokens", 512),
-            )
-            call_elapsed_ms = round((time.perf_counter() - call_start) * 1000, 1)
-            if first_response_ms is None:
-                first_response_ms = call_elapsed_ms
+            if observer is not None:
+                observer("model_request", {"attempt": recovery_tries + 1, "prompt": current_prompt})
 
-            message_usage = update_usage(empty_usage(), getattr(response, "usage", None))
-            last_usage = message_usage
-            turn_provider_usage = accumulate_usage(turn_provider_usage, message_usage)
-            total_provider_usage = accumulate_usage(total_provider_usage, message_usage)
-            total_output_tokens += int((message_usage or {}).get("output_tokens", 0) or 0)
+            messages.append({"role": "user", "content": current_prompt})
+            _append_transcript_entry(transcript, "user", current_prompt_kind, current_prompt, turn_id=turn_id)
 
-            message = response.choices[0].message
-            assistant_text = getattr(message, "content", "") or ""
-            raw_tool_calls = [
-                {
-                    "id": getattr(tool_call, "id", "") or f"tc_{turn_num}_{tool_round}_{index}",
-                    "name": tool_call.function.name,
-                    "arguments_json": tool_call.function.arguments or "{}",
-                }
-                for index, tool_call in enumerate(message.tool_calls or [])
-            ]
+            first_response_ms_attempt = None
+            actual_tools_called = []
+            hallucinated_tools = []
+            tool_round = 0
+            assistant_text = ""
+            retry_count = 0
+            initial_no_response = False
+            no_response = False
 
-            has_visible_event = bool(assistant_text.strip()) or bool(raw_tool_calls)
-            if not has_visible_event:
-                if retry_count == 0:
-                    initial_no_response = True
-                retry_count += 1
-                no_response = True
-                invalid_execution_events.append(
-                    {
-                        "turn_id": turn_id,
-                        "error": "no_response",
-                        "attempt": retry_count,
-                    }
+            while True:
+                call_start = time.perf_counter()
+                response = client.chat.completions.create(
+                    model=MODEL,
+                    messages=messages,
+                    tools=tool_defs_by_turn[turn_id],
+                    tool_choice="auto",
+                    temperature=request_args.get("temperature", 0.6),
+                    top_p=request_args.get("top_p", 0.95),
+                    max_tokens=request_args.get("max_tokens", 512),
                 )
+                call_elapsed_ms = round((time.perf_counter() - call_start) * 1000, 1)
+                if first_response_ms is None:
+                    first_response_ms = call_elapsed_ms
+                if first_response_ms_attempt is None:
+                    first_response_ms_attempt = call_elapsed_ms
+
+                message_usage = update_usage(empty_usage(), getattr(response, "usage", None))
+                last_usage = message_usage
+                turn_provider_usage = accumulate_usage(turn_provider_usage, message_usage)
+                total_provider_usage = accumulate_usage(total_provider_usage, message_usage)
+                total_output_tokens += int((message_usage or {}).get("output_tokens", 0) or 0)
+
+                message = response.choices[0].message
+                assistant_text = getattr(message, "content", "") or ""
+                raw_tool_calls = [
+                    {
+                        "id": getattr(tool_call, "id", "") or f"tc_{turn_num}_{tool_round}_{index}",
+                        "name": tool_call.function.name,
+                        "arguments_json": tool_call.function.arguments or "{}",
+                    }
+                    for index, tool_call in enumerate(message.tool_calls or [])
+                ]
+
+                has_visible_event = bool(assistant_text.strip()) or bool(raw_tool_calls)
+                if not has_visible_event:
+                    if retry_count == 0:
+                        initial_no_response = True
+                    retry_count += 1
+                    no_response = True
+                    invalid_execution_events.append(
+                        {
+                            "turn_id": turn_id,
+                            "error": "no_response",
+                            "attempt": retry_count,
+                            "recovery_try": recovery_tries,
+                        }
+                    )
+                    if observer is not None:
+                        observer(
+                            "no_response",
+                            {
+                                "turn": turn_num,
+                                "attempt": retry_count,
+                                "max_retries": MAX_NO_RESPONSE_RETRIES,
+                                "retrying": retry_count <= MAX_NO_RESPONSE_RETRIES,
+                                "reason": "assistant emitted no text and no tool calls",
+                                "latency_ms": call_elapsed_ms,
+                                "context_window": context_window,
+                            },
+                        )
+                    if retry_count <= MAX_NO_RESPONSE_RETRIES:
+                        continue
+                    _append_transcript_entry(
+                        transcript,
+                        "assistant",
+                        "invalid_turn",
+                        "Assistant did not respond.",
+                        turn_id=turn_id,
+                        status="no_response",
+                    )
+                    assistant_text = ""
+                    break
+
+                no_response = False
+
                 if observer is not None:
                     observer(
-                        "no_response",
+                        "assistant_action",
                         {
-                            "turn": turn_num,
-                            "attempt": retry_count,
-                            "max_retries": MAX_NO_RESPONSE_RETRIES,
-                            "retrying": retry_count <= MAX_NO_RESPONSE_RETRIES,
-                            "reason": "assistant emitted no text and no tool calls",
+                            "content": assistant_text,
+                            "tool_calls": raw_tool_calls,
                             "latency_ms": call_elapsed_ms,
                             "context_window": context_window,
                         },
                     )
-                if retry_count <= MAX_NO_RESPONSE_RETRIES:
-                    continue
-                _append_transcript_entry(
-                    transcript,
-                    "assistant",
-                    "invalid_turn",
-                    "Assistant did not respond.",
-                    turn_id=turn_id,
-                    status="no_response",
-                )
-                assistant_text = ""
-                break
-
-            no_response = False
-
-            if observer is not None:
-                observer(
-                    "assistant_action",
-                    {
-                        "content": assistant_text,
-                        "tool_calls": raw_tool_calls,
-                        "latency_ms": call_elapsed_ms,
-                        "context_window": context_window,
-                    },
-                )
-
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": assistant_text or "",
-                    "tool_calls": [
-                        {
-                            "id": tool_call["id"],
-                            "type": "function",
-                            "function": {
-                                "name": tool_call["name"],
-                                "arguments": tool_call["arguments_json"],
-                            },
-                        }
-                        for tool_call in raw_tool_calls
-                    ],
-                }
-            )
-            if assistant_text.strip():
-                _append_transcript_entry(transcript, "assistant", "message", assistant_text, turn_id=turn_id)
-
-            if not raw_tool_calls:
-                break
-            tool_round += 1
-            if tool_round > max_tool_rounds:
-                invalid_execution_events.append({"turn_id": turn_id, "error": "tool_round_limit_reached"})
-                break
-
-            for tool_call in raw_tool_calls:
-                tool_name = tool_call["name"]
-                tool_call_id = tool_call["id"]
-                actual_tools_called.append(tool_name)
-                all_tool_calls_flat.append(tool_name)
-
-                try:
-                    arguments = json.loads(tool_call["arguments_json"] or "{}")
-                except json.JSONDecodeError:
-                    arguments = {}
-                    invalid_execution_events.append(
-                        {
-                            "turn_id": turn_id,
-                            "tool_call_id": tool_call_id,
-                            "tool_name": tool_name,
-                            "error": "invalid_tool_arguments_json",
-                        }
-                    )
-
-                if observer is not None:
-                    observer("tool_call", {"tool_name": tool_name, "tool_call_id": tool_call_id, "arguments": arguments})
-
-                _append_transcript_entry(
-                    transcript,
-                    "assistant",
-                    "tool_use",
-                    json.dumps(arguments, ensure_ascii=True),
-                    turn_id=turn_id,
-                    tool_name=tool_name,
-                    tool_call_id=tool_call_id,
-                )
-
-                if tool_name not in turn_def["active_tools"]:
-                    hallucinated_tools.append(tool_name)
-
-                result = mock_executor.invoke(tool_call_id, tool_name, arguments)
-                if result.get("is_error"):
-                    invalid_execution_events.append(
-                        {
-                            "turn_id": turn_id,
-                            "tool_call_id": tool_call_id,
-                            "tool_name": tool_name,
-                            "error": result.get("error_type"),
-                        }
-                    )
 
                 messages.append(
                     {
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": json.dumps(result, ensure_ascii=True),
+                        "role": "assistant",
+                        "content": assistant_text or "",
+                        "tool_calls": [
+                            {
+                                "id": tool_call["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": tool_call["name"],
+                                    "arguments": tool_call["arguments_json"],
+                                },
+                            }
+                            for tool_call in raw_tool_calls
+                        ],
                     }
                 )
+                if assistant_text.strip():
+                    _append_transcript_entry(transcript, "assistant", "message", assistant_text, turn_id=turn_id)
 
-                _append_transcript_entry(
-                    transcript,
-                    "user",
-                    "tool_result",
-                    _result_content(result),
-                    turn_id=turn_id,
-                    tool_name=tool_name,
-                    tool_call_id=tool_call_id,
-                    status="ok" if result.get("ok") else "error",
-                )
+                if not raw_tool_calls:
+                    break
+                tool_round += 1
+                if tool_round > 10:
+                    invalid_execution_events.append({"turn_id": turn_id, "error": "tool_round_limit_reached"})
+                    break
 
-                if observer is not None:
-                    observer(
-                        "tool_result",
-                        {
-                            "tool_name": tool_name,
-                            "tool_call_id": tool_call_id,
-                            "ok": bool(result.get("ok")),
-                            "result": result,
-                        },
+                for tool_call in raw_tool_calls:
+                    tool_name = tool_call["name"]
+                    tool_call_id = tool_call["id"]
+                    actual_tools_called.append(tool_name)
+                    all_tool_calls_flat.append(tool_name)
+
+                    try:
+                        arguments = json.loads(tool_call["arguments_json"] or "{}")
+                    except json.JSONDecodeError:
+                        arguments = {}
+                        invalid_execution_events.append(
+                            {
+                                "turn_id": turn_id,
+                                "tool_call_id": tool_call_id,
+                                "tool_name": tool_name,
+                                "error": "invalid_tool_arguments_json",
+                            }
+                        )
+
+                    if observer is not None:
+                        observer("tool_call", {"tool_name": tool_name, "tool_call_id": tool_call_id, "arguments": arguments})
+
+                    _append_transcript_entry(
+                        transcript,
+                        "assistant",
+                        "tool_use",
+                        json.dumps(arguments, ensure_ascii=True),
+                        turn_id=turn_id,
+                        tool_name=tool_name,
+                        tool_call_id=tool_call_id,
                     )
+
+                    if tool_name not in turn_def["active_tools"]:
+                        hallucinated_tools.append(tool_name)
+
+                    result = mock_executor.invoke(tool_call_id, tool_name, arguments)
+                    if result.get("is_error"):
+                        invalid_execution_events.append(
+                            {
+                                "turn_id": turn_id,
+                                "tool_call_id": tool_call_id,
+                                "tool_name": tool_name,
+                                "error": result.get("error_type"),
+                            }
+                        )
+
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": json.dumps(result, ensure_ascii=True),
+                        }
+                    )
+
+                    _append_transcript_entry(
+                        transcript,
+                        "user",
+                        "tool_result",
+                        _result_content(result),
+                        turn_id=turn_id,
+                        tool_name=tool_name,
+                        tool_call_id=tool_call_id,
+                        status="ok" if result.get("ok") else "error",
+                    )
+
+                    if observer is not None:
+                        observer(
+                            "tool_result",
+                            {
+                                "tool_name": tool_name,
+                                "tool_call_id": tool_call_id,
+                                "ok": bool(result.get("ok")),
+                                "result": result,
+                            },
+                        )
+
+            scores = _score_turn_v2(
+                {**turn_def, "expect": active_expect},
+                actual_tools_called,
+                assistant_text,
+                hallucinated_tools,
+                no_response=no_response,
+            )
+            detected_triggers = _detect_failure_triggers({**turn_def, "expect": active_expect}, scores, actual_tools_called)
+            branch = None
+            if not no_response and recovery_tries < int(turn_def.get("max_recovery_tries", DEFAULT_MAX_RECOVERY_TRIES) or DEFAULT_MAX_RECOVERY_TRIES):
+                branch = _select_failure_branch(turn_def, detected_triggers, recovery_branch_counts)
+            if branch is None:
+                recovery_resolved = not no_response
+                if detected_triggers and recovery_tries >= int(turn_def.get("max_recovery_tries", DEFAULT_MAX_RECOVERY_TRIES) or DEFAULT_MAX_RECOVERY_TRIES):
+                    recovery_loop_exhausted = True
+                break
+
+            recovery_history.append(
+                {
+                    "recovery_try": recovery_tries + 1,
+                    "trigger": branch.get("trigger"),
+                    "followup_user_message": branch.get("followup_user_message"),
+                    "attempt_prompt_label": current_prompt_label,
+                    "scores": {
+                        "turn_score": scores.get("turn_score"),
+                        "content_recall": scores.get("content_recall"),
+                        "format_correct": scores.get("format_correct"),
+                        "unsupported_claim_count": scores.get("unsupported_claim_count", 0),
+                    },
+                    "score_notes": list(scores.get("score_notes") or []),
+                }
+            )
+            recovery_tries += 1
+            trigger_name = str(branch.get("trigger") or "")
+            recovery_branch_counts[trigger_name] = recovery_branch_counts.get(trigger_name, 0) + 1
+            current_prompt = str(branch.get("followup_user_message", "") or "")
+            current_prompt_kind = "correction_prompt"
+            current_prompt_label = f"recovery_{recovery_tries}"
+            active_expect = _merge_expect(turn_def.get("expect", {}), branch.get("expect_override", {}))
+            if observer is not None:
+                observer(
+                    "recovery_branch",
+                    {
+                        "turn": turn_num,
+                        "recovery_try": recovery_tries,
+                        "trigger": trigger_name,
+                        "followup_user_message": current_prompt,
+                    },
+                )
 
         turn_elapsed_ms = round((time.perf_counter() - turn_start) * 1000, 1)
         context_counts = estimate_context_token_counts(messages, tool_defs_by_turn[turn_id], base_url=base_url)
         context_estimate = int(context_counts["measured"]) if context_counts["measured"] is not None else int(context_counts["heuristic"])
         hardware = get_hardware_snapshot(server_pid)
-        scores = _score_turn_v2(
-            turn_def,
-            actual_tools_called,
-            assistant_text,
-            hallucinated_tools,
-            no_response=no_response,
-        )
         tokens_per_second = round(total_output_tokens / max(turn_elapsed_ms / 1000.0, 0.001), 2)
         turn_invalid_events = [event for event in invalid_execution_events if event["turn_id"] == turn_id]
         turn_provider_tokens = usage_total_tokens(turn_provider_usage)
@@ -1143,6 +1266,10 @@ def run_session_benchmark(
             "hallucinated_tools": hallucinated_tools,
             "tool_rounds": tool_round,
             "retry_count": retry_count,
+            "recovery_tries": recovery_tries,
+            "recovery_resolved": recovery_resolved,
+            "recovery_loop_exhausted": recovery_loop_exhausted,
+            "recovery_history": recovery_history,
             "initial_no_response": initial_no_response,
             "no_response": no_response,
             "assistant_text": assistant_text[:2000],
@@ -1225,6 +1352,9 @@ def run_session_benchmark(
             "provider_usage_total_tokens": usage_total_tokens(total_provider_usage),
             "invalid_execution_count": len(invalid_execution_events),
             "no_response_turn_count": sum(1 for turn in turn_results if turn.get("no_response")),
+            "recovery_turn_count": sum(1 for turn in turn_results if int(turn.get("recovery_tries", 0) or 0) > 0),
+            "recovery_try_count": sum(int(turn.get("recovery_tries", 0) or 0) for turn in turn_results),
+            "recovery_loop_exhausted_turn_count": sum(1 for turn in turn_results if turn.get("recovery_loop_exhausted")),
             "format_obedience_rate": round(
                 sum(float((turn.get("scores") or {}).get("format_obedience_score", 0.0) or 0.0) for turn in turn_results)
                 / max(1, len(turn_results)),
@@ -1299,6 +1429,9 @@ def run_session_benchmark(
                 "unsupported_claim_count": sum(
                     int((turn.get("scores") or {}).get("unsupported_claim_count", 0) or 0) for turn in turn_results
                 ),
+                "recovery_turn_count": sum(1 for turn in turn_results if int(turn.get("recovery_tries", 0) or 0) > 0),
+                "recovery_try_count": sum(int(turn.get("recovery_tries", 0) or 0) for turn in turn_results),
+                "recovery_loop_exhausted_turn_count": sum(1 for turn in turn_results if turn.get("recovery_loop_exhausted")),
                 "no_response_turn_count": sum(1 for turn in turn_results if turn.get("no_response")),
             },
             "turn_receipts": [turn.get("audit_receipt", {}) for turn in turn_results],
