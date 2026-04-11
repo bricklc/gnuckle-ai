@@ -123,7 +123,10 @@ def normalize_benchmark_definition(data: dict) -> dict:
                     "tool_order": tool_expect.get("ordered_calls", expect.get("tool_order", [])),
                     "finish_required": finish_required,
                     "response_contains": response_expect.get("must_contain", expect.get("response_contains", [])),
+                    "response_contains_literal": response_expect.get("must_contain_literal", expect.get("response_contains_literal", [])),
+                    "response_contains_normalized": response_expect.get("must_contain_normalized", expect.get("response_contains_normalized", [])),
                     "response_format": response_expect.get("format", expect.get("response_format")),
+                    "response_format_rules": response_expect.get("rules", expect.get("response_format_rules", [])),
                     "expect_refusal": expect.get("expect_refusal", False),
                 },
             }
@@ -281,6 +284,193 @@ def _score_turn(
         composite -= 0.15
     scores["turn_score"] = round(max(0.0, composite), 3)
     return scores
+
+
+def _normalize_match_text(text: str) -> str:
+    cleaned = str(text or "")
+    cleaned = re.sub(r"`+", " ", cleaned)
+    cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", cleaned)
+    cleaned = re.sub(r"\*([^*]+)\*", r"\1", cleaned)
+    cleaned = re.sub(r"^#{1,6}\s*", "", cleaned, flags=re.MULTILINE)
+    cleaned = cleaned.lower()
+    cleaned = re.sub(r"[_|]", " ", cleaned)
+    cleaned = re.sub(r"[^a-z0-9./]+", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def _normalized_contains(normalized_text: str, phrase: str) -> bool:
+    phrase_norm = _normalize_match_text(phrase)
+    return bool(phrase_norm) and phrase_norm in normalized_text
+
+
+def _evaluate_response_format_v2(text: str, expected_format: str | None, rules: list[str]) -> dict:
+    lines = [line.rstrip() for line in str(text or "").splitlines()]
+    nonempty = [line.strip() for line in lines if line.strip()]
+    bullet_lines = [line for line in nonempty if re.match(r"^[-*•]\s", line)]
+    numbered_lines = [line for line in nonempty if re.match(r"^\d+[.)]\s", line)]
+    heading_lines = [line for line in nonempty if re.match(r"^#{1,6}\s", line)]
+    table_lines = [line for line in nonempty if line.count("|") >= 2]
+    bullet_majority = (len(bullet_lines) + len(numbered_lines)) >= max(1, len(nonempty) // 2) if nonempty else False
+    plain_text_like = not heading_lines and not table_lines
+
+    checks: list[bool] = []
+    if expected_format == "bullet_points":
+        checks.extend([bullet_majority, not heading_lines, not table_lines])
+    elif expected_format == "plain_text":
+        checks.extend([plain_text_like, not bullet_lines and not numbered_lines])
+    else:
+        checks.append(True)
+
+    for rule in rules or []:
+        rule_name = str(rule or "").strip().lower()
+        if rule_name == "no_headings":
+            checks.append(not heading_lines)
+        elif rule_name == "no_tables":
+            checks.append(not table_lines)
+        elif rule_name == "flat_bullets":
+            checks.append(bullet_majority)
+        elif rule_name == "short_action_preamble":
+            checks.append(bool(nonempty) and len(nonempty[0].split()) <= 12)
+
+    obedience = round(sum(1 for flag in checks if flag) / max(1, len(checks)), 3)
+    return {
+        "format_correct": obedience >= 0.999,
+        "format_obedience_score": obedience,
+        "format_indicators": {
+            "used_headings": bool(heading_lines),
+            "used_table": bool(table_lines),
+            "bullet_line_count": len(bullet_lines),
+            "numbered_line_count": len(numbered_lines),
+            "nonempty_line_count": len(nonempty),
+            "bullet_majority": bullet_majority,
+            "plain_text_like": plain_text_like,
+        },
+    }
+
+
+def _score_turn_v2(
+    turn_def: dict,
+    actual_tool_calls: list[str],
+    assistant_text: str,
+    hallucinated_tools: list[str],
+    *,
+    no_response: bool = False,
+) -> dict:
+    scores = _score_turn(
+        turn_def,
+        actual_tool_calls,
+        assistant_text,
+        hallucinated_tools,
+        no_response=no_response,
+    )
+    expect = turn_def.get("expect", {})
+    text_lower = assistant_text.lower()
+    normalized_text = _normalize_match_text(assistant_text)
+
+    literal_contains = list(expect.get("response_contains_literal", []))
+    semantic_contains = list(expect.get("response_contains_normalized", []))
+    fallback_contains = list(expect.get("response_contains", []))
+
+    if fallback_contains:
+        literal_found = [item for item in fallback_contains if item.lower() in text_lower]
+        semantic_found = [item for item in fallback_contains if _normalized_contains(normalized_text, item)]
+        scores["content_literal_recall"] = round(len(literal_found) / len(fallback_contains), 3)
+        scores["content_literal_missing"] = [item for item in fallback_contains if item.lower() not in text_lower]
+        scores["content_semantic_recall"] = round(len(semantic_found) / len(fallback_contains), 3)
+        scores["content_semantic_missing"] = [item for item in fallback_contains if not _normalized_contains(normalized_text, item)]
+        scores["semantic_equivalent_only"] = [
+            item for item in fallback_contains
+            if _normalized_contains(normalized_text, item) and item.lower() not in text_lower
+        ]
+        scores["content_recall"] = scores["content_semantic_recall"]
+        scores["content_missing"] = scores["content_semantic_missing"]
+    else:
+        if literal_contains:
+            literal_found = [item for item in literal_contains if item.lower() in text_lower]
+            scores["content_literal_recall"] = round(len(literal_found) / len(literal_contains), 3)
+            scores["content_literal_missing"] = [item for item in literal_contains if item.lower() not in text_lower]
+        else:
+            scores["content_literal_recall"] = 1.0
+            scores["content_literal_missing"] = []
+        if semantic_contains:
+            semantic_found = [item for item in semantic_contains if _normalized_contains(normalized_text, item)]
+            scores["content_semantic_recall"] = round(len(semantic_found) / len(semantic_contains), 3)
+            scores["content_semantic_missing"] = [item for item in semantic_contains if not _normalized_contains(normalized_text, item)]
+        else:
+            scores["content_semantic_recall"] = 1.0
+            scores["content_semantic_missing"] = []
+        scores["semantic_equivalent_only"] = []
+        if semantic_contains:
+            scores["content_recall"] = scores["content_semantic_recall"]
+            scores["content_missing"] = scores["content_semantic_missing"]
+
+    format_result = _evaluate_response_format_v2(
+        assistant_text,
+        expect.get("response_format"),
+        expect.get("response_format_rules", []),
+    )
+    scores["format_correct"] = format_result["format_correct"]
+    scores["format_obedience_score"] = format_result["format_obedience_score"]
+    scores["format_indicators"] = format_result["format_indicators"]
+
+    no_violations = 1.0 if (not scores.get("unwanted_tool_violations") and not hallucinated_tools) else 0.0
+    composite = (
+        0.25 * scores["tool_recall"]
+        + 0.25 * scores["tool_precision"]
+        + 0.15 * (1.0 if scores["tool_order_correct"] else 0.0)
+        + 0.15 * scores["content_recall"]
+        + 0.10 * scores["format_obedience_score"]
+        + 0.10 * no_violations
+    )
+    if expect.get("finish_required") and not scores.get("finish_called"):
+        composite -= 0.15
+    if no_response:
+        composite = 0.0
+    scores["turn_score"] = round(max(0.0, composite), 3)
+    return scores
+
+
+def _build_turn_audit_receipt(turn_result: dict) -> dict:
+    scores = turn_result.get("scores") or {}
+    receipt_flags = []
+    if scores.get("semantic_equivalent_only"):
+        receipt_flags.append("literal_semantic_gap")
+    if not scores.get("format_correct", True):
+        receipt_flags.append("format_drift")
+    if turn_result.get("no_response"):
+        receipt_flags.append("no_response")
+    if scores.get("hallucinated_tools"):
+        receipt_flags.append("hallucinated_tools")
+    if scores.get("missing_tools"):
+        receipt_flags.append("missing_tools")
+    return {
+        "turn": turn_result.get("turn"),
+        "turn_id": turn_result.get("turn_id"),
+        "title": turn_result.get("title"),
+        "turn_score": scores.get("turn_score"),
+        "format": {
+            "expected": (turn_result.get("expect") or {}).get("response_format"),
+            "correct": scores.get("format_correct"),
+            "obedience_score": scores.get("format_obedience_score"),
+            "indicators": scores.get("format_indicators") or {},
+        },
+        "content": {
+            "literal_recall": scores.get("content_literal_recall"),
+            "literal_missing": scores.get("content_literal_missing") or [],
+            "semantic_recall": scores.get("content_semantic_recall", scores.get("content_recall")),
+            "semantic_missing": scores.get("content_semantic_missing", scores.get("content_missing")) or [],
+            "semantic_equivalent_only": scores.get("semantic_equivalent_only") or [],
+        },
+        "tools": {
+            "called": turn_result.get("tools_called", []),
+            "missing": scores.get("missing_tools", []),
+            "extra": scores.get("extra_tools", []),
+            "hallucinated": scores.get("hallucinated_tools", []),
+            "order_correct": scores.get("tool_order_correct"),
+        },
+        "flags": receipt_flags,
+    }
 
 
 class MockToolExecutor:
@@ -773,7 +963,7 @@ def run_session_benchmark(
         context_counts = estimate_context_token_counts(messages, tool_defs_by_turn[turn_id], base_url=base_url)
         context_estimate = int(context_counts["measured"]) if context_counts["measured"] is not None else int(context_counts["heuristic"])
         hardware = get_hardware_snapshot(server_pid)
-        scores = _score_turn(
+        scores = _score_turn_v2(
             turn_def,
             actual_tools_called,
             assistant_text,
@@ -791,6 +981,7 @@ def run_session_benchmark(
             "title": turn_title,
             "prompt": prompt,
             "active_tools": turn_def["active_tools"],
+            "expect": turn_def.get("expect", {}),
             "tools_called": actual_tools_called,
             "hallucinated_tools": hallucinated_tools,
             "tool_rounds": tool_round,
@@ -816,6 +1007,7 @@ def run_session_benchmark(
             },
             "invalid_execution_events": turn_invalid_events,
         }
+        turn_result["audit_receipt"] = _build_turn_audit_receipt(turn_result)
         turn_results.append(turn_result)
 
         status = "PASS" if scores["turn_score"] >= 0.7 else "FAIL"
@@ -876,6 +1068,21 @@ def run_session_benchmark(
             "provider_usage_total_tokens": usage_total_tokens(total_provider_usage),
             "invalid_execution_count": len(invalid_execution_events),
             "no_response_turn_count": sum(1 for turn in turn_results if turn.get("no_response")),
+            "format_obedience_rate": round(
+                sum(float((turn.get("scores") or {}).get("format_obedience_score", 0.0) or 0.0) for turn in turn_results)
+                / max(1, len(turn_results)),
+                3,
+            ),
+            "format_correct_turn_count": sum(1 for turn in turn_results if (turn.get("scores") or {}).get("format_correct")),
+            "heading_violation_turn_count": sum(
+                1 for turn in turn_results if ((turn.get("scores") or {}).get("format_indicators") or {}).get("used_headings")
+            ),
+            "table_violation_turn_count": sum(
+                1 for turn in turn_results if ((turn.get("scores") or {}).get("format_indicators") or {}).get("used_table")
+            ),
+            "literal_semantic_gap_turn_count": sum(
+                1 for turn in turn_results if (turn.get("scores") or {}).get("semantic_equivalent_only")
+            ),
             "peak_context_tokens_estimate": max(
                 (int(turn.get("metrics", {}).get("context_tokens_estimate", 0) or 0) for turn in turn_results),
                 default=0,
@@ -902,6 +1109,26 @@ def run_session_benchmark(
             "transcript": normalized_transcript,
         },
         "turns": turn_results,
+        "llm_audit_receipt": {
+            "benchmark_id": bench_id,
+            "benchmark_title": benchmark["title"],
+            "model_name": model_name or MODEL,
+            "generated_at": datetime.now().isoformat(),
+            "summary": {
+                "average_score": avg_score,
+                "pass_rate": round(pass_count / max(1, len(turn_results)), 3),
+                "format_obedience_rate": round(
+                    sum(float((turn.get("scores") or {}).get("format_obedience_score", 0.0) or 0.0) for turn in turn_results)
+                    / max(1, len(turn_results)),
+                    3,
+                ),
+                "literal_semantic_gap_turn_count": sum(
+                    1 for turn in turn_results if (turn.get("scores") or {}).get("semantic_equivalent_only")
+                ),
+                "no_response_turn_count": sum(1 for turn in turn_results if turn.get("no_response")),
+            },
+            "turn_receipts": [turn.get("audit_receipt", {}) for turn in turn_results],
+        },
     }
 
     print()

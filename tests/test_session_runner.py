@@ -279,6 +279,52 @@ class SessionRunnerTests(unittest.TestCase):
         transcript = result["session"]["transcript"]
         self.assertTrue(any(entry["kind"] == "invalid_turn" for entry in transcript))
 
+    def test_semantic_gap_and_format_receipt_are_recorded(self) -> None:
+        benchmark = {
+            "id": "bench",
+            "title": "Bench",
+            "type": "session",
+            "system_prompt": "sys",
+            "tools": ["echo"],
+            "turns": [
+                {
+                    "id": "t01",
+                    "prompt": "Recall the agenda.",
+                    "active_tools": [],
+                    "expect": {
+                        "response_contains_normalized": ["9am review todo"],
+                        "response_format": "bullet_points",
+                        "response_format_rules": ["no_headings", "no_tables", "flat_bullets"],
+                        "finish_required": False,
+                    },
+                }
+            ],
+        }
+
+        FakeOpenAI.responses = [
+            fake_response(content="## Today's Agenda\n- **9am** - Review todo"),
+        ]
+
+        with (
+            patch("gnuckle.session_runner.OpenAI", FakeOpenAI),
+            patch("gnuckle.session_runner.estimate_context_token_counts", return_value={"measured": 40, "heuristic": 40}),
+            patch("gnuckle.session_runner.get_hardware_snapshot", return_value={"vram_peak_mb": 1000}),
+            patch("gnuckle.session_runner.empty_usage", return_value={"output_tokens": 0}),
+            patch("gnuckle.session_runner.update_usage", side_effect=lambda current, usage: usage or {"output_tokens": 0}),
+            patch("gnuckle.session_runner.accumulate_usage", side_effect=lambda total, usage: {"output_tokens": (total or {}).get("output_tokens", 0) + (usage or {}).get("output_tokens", 0)}),
+            patch("gnuckle.session_runner.usage_total_tokens", side_effect=lambda usage: (usage or {}).get("output_tokens", 0)),
+        ):
+            result = run_session_benchmark(benchmark, base_url="http://localhost:8080/v1")
+
+        scores = result["turns"][0]["scores"]
+        receipt = result["turns"][0]["audit_receipt"]
+        self.assertEqual(scores["content_semantic_recall"], 1.0)
+        self.assertFalse(scores["format_correct"])
+        self.assertTrue(scores["format_indicators"]["used_headings"])
+        self.assertIn("format_drift", receipt["flags"])
+        self.assertEqual(result["aggregate"]["heading_violation_turn_count"], 1)
+        self.assertIn("turn_receipts", result["llm_audit_receipt"])
+
 
 if __name__ == "__main__":
     unittest.main()

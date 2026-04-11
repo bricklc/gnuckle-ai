@@ -271,7 +271,7 @@
         "tools_not_called": ["read_file", "write_file", "append_file"],
         "tool_order": ["update_item", "add_item", "read_list"],
         "finish_required": false,
-        "response_contains": ["book dentist appointment for next Wednesday", "ship release notes", "buy 2 liters of oat milk"]
+        "response_contains_normalized": ["book dentist appointment for next Wednesday", "ship release notes", "buy 2 liters of oat milk"]
       }
     },
     {
@@ -470,8 +470,9 @@
         "tools_called": [],
         "tools_not_called": ["read_file", "write_file", "list_files", "get_date", "read_list"],
         "finish_required": false,
-        "response_contains": ["9am review todo", "11am config check", "2pm deploy staging", "4pm journal update"],
-        "response_format": "bullet_points"
+        "response_contains_normalized": ["9am review todo", "11am config check", "2pm deploy staging", "4pm journal update"],
+        "response_format": "bullet_points",
+        "response_format_rules": ["no_headings", "no_tables", "flat_bullets"]
       }
     },
     {
@@ -597,8 +598,10 @@
         "tools_called": ["finish"],
         "tools_not_called": ["read_file", "write_file", "list_files"],
         "finish_required": true,
-        "response_contains": ["9090", "handoff.md", "rollout.md", "status.txt", "daily_log.txt", "ship release notes draft", "archive benchmark artifacts", "daily agenda"],
-        "response_format": "bullet_points"
+        "response_contains_literal": ["9090", "handoff.md", "rollout.md", "status.txt", "daily_log.txt"],
+        "response_contains_normalized": ["ship release notes draft", "archive benchmark artifacts", "daily agenda"],
+        "response_format": "bullet_points",
+        "response_format_rules": ["no_headings", "no_tables", "flat_bullets"]
       }
     }
   ]
