@@ -1746,6 +1746,99 @@ def _print_run_banner(benchmark_mode, model_path, server_path, output_path, pres
     ape_print("loading")
     print()
 
+
+def _print_profile_card(preset):
+    """Display the sampler profile card for user review before benchmark."""
+    sa = preset.get("server_args", {})
+    ra = preset.get("request_args", {})
+    sources = preset.get("source", [])
+    notes = preset.get("notes", "")
+
+    print("  ┌─────────────────────────────────────────────────┐")
+    print(f"  │  Profile Card: {preset.get('name', 'default'):<33}│")
+    print(f"  │  {preset.get('description', ''):<48}│")
+    print("  ├─────────────────────────────────────────────────┤")
+    print(f"  │  server_args                                   │")
+    print(f"  │    temp           : {str(sa.get('temp', '—')):<27}│")
+    print(f"  │    top_p          : {str(sa.get('top_p', '—')):<27}│")
+    print(f"  │    top_k          : {str(sa.get('top_k', '—')):<27}│")
+    print(f"  │    repeat_penalty : {str(sa.get('repeat_penalty', '—')):<27}│")
+    print(f"  │    repeat_last_n  : {str(sa.get('repeat_last_n', '—')):<27}│")
+    print(f"  │    min_p          : {str(sa.get('min_p', '—')):<27}│")
+    print("  ├─────────────────────────────────────────────────┤")
+    print(f"  │  request_args                                  │")
+    print(f"  │    temperature    : {str(ra.get('temperature', '—')):<27}│")
+    print(f"  │    top_p          : {str(ra.get('top_p', '—')):<27}│")
+    print("  ├─────────────────────────────────────────────────┤")
+    for src in sources[:3]:
+        truncated = (src[:45] + "...") if len(src) > 48 else src
+        print(f"  │  {truncated:<48}│")
+    if notes:
+        print("  ├─────────────────────────────────────────────────┤")
+        # Wrap notes to fit the card
+        words = notes.split()
+        line = ""
+        for word in words:
+            if len(line) + len(word) + 1 > 46:
+                print(f"  │  {line:<48}│")
+                line = word
+            else:
+                line = f"{line} {word}".strip()
+        if line:
+            print(f"  │  {line:<48}│")
+    print("  └─────────────────────────────────────────────────┘")
+    print()
+
+
+def _prompt_profile_confirmation(preset):
+    """Show profile card and prompt user to proceed or edit sampler values.
+
+    Returns the (possibly modified) preset.
+    """
+    _print_profile_card(preset)
+
+    if not _is_interactive_terminal():
+        return preset
+
+    while True:
+        answer = input("  Proceed without making any changes? (y/n): ").strip().lower()
+        if answer in ("y", "yes", ""):
+            return preset
+        if answer in ("n", "no"):
+            break
+        print("  Please enter y or n.")
+
+    print()
+    print("  Enter new values (press Enter to keep current):")
+    sa = preset.get("server_args", {})
+    ra = preset.get("request_args", {})
+
+    edits = [
+        ("temp",           sa, float),
+        ("top_p",          sa, float),
+        ("top_k",          sa, int),
+        ("repeat_penalty", sa, float),
+        ("repeat_last_n",  sa, int),
+        ("min_p",          sa, float),
+    ]
+    for key, target, cast in edits:
+        current = target.get(key, "")
+        raw = input(f"    {key:<18} [{current}]: ").strip()
+        if raw:
+            try:
+                target[key] = cast(raw)
+            except ValueError:
+                print(f"    invalid value, keeping {current}")
+
+    # Sync request_args with server_args
+    ra["temperature"] = sa.get("temp", ra.get("temperature"))
+    ra["top_p"] = sa.get("top_p", ra.get("top_p"))
+
+    print()
+    _print_profile_card(preset)
+    return preset
+
+
 # ── FULL BENCHMARK ORCHESTRATOR ──────────────────────────────────────────────
 def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, scan_dir=None,
                        output_dir=None, num_turns=None, port=None, profile_path=None,
@@ -1839,7 +1932,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
     )
 
     if _is_interactive_terminal():
-        print("  benchmark start is automatic. ctrl+c if you want to stop before launch.")
+        preset = _prompt_profile_confirmation(preset)
 
     output_files = []
     server_proc  = None
