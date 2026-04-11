@@ -269,10 +269,37 @@ class HarnessTheaterObserver:
         self.verification = ""
         self.final = ""
         self.events = deque(maxlen=10)
+        self.transcript = deque(maxlen=28)
         self.last_render_at = 0.0
 
     def _add_event(self, text: str) -> None:
         self.events.appendleft(text)
+
+    def _add_transcript(self, side: str, kind: str, body: str, status: str = "") -> None:
+        self.transcript.append(
+            {
+                "side": side,
+                "kind": kind,
+                "body": body.strip(),
+                "status": status.strip(),
+            }
+        )
+
+    def _render_transcript(self, width: int) -> list[str]:
+        lines = ["[ Transcript ]", "-" * width]
+        for item in self.transcript:
+            side = item["side"]
+            kind = item["kind"]
+            status = f" [{item['status']}]" if item["status"] else ""
+            header = f"{side.upper()} :: {kind}{status}"
+            lines.append(header[:width])
+            body_lines = (item["body"] or "").splitlines() or [""]
+            for raw in body_lines[:8]:
+                lines.append(("  " + raw)[:width])
+            if len(body_lines) > 8:
+                lines.append("  ... [more]")
+            lines.append("")
+        return lines
 
     def _render(self) -> None:
         width = _terminal_width()
@@ -295,25 +322,12 @@ class HarnessTheaterObserver:
         )
         print(hud[:width])
         print(top)
-
-        prompt_text = "" if self.show_prompts == "off" else self.prompt
-        left = _line_block(self.prompt_label, prompt_text, width, max_lines=10)
-        left.extend(["", *_line_block("Assistant", self.assistant, width, max_lines=14)])
-        right = _line_block("Event Rail", "\n".join(self.events), width, max_lines=18)
-
-        for line in left:
+        print("-" * width)
+        for line in self._render_transcript(width):
             print(line[:width])
         print("-" * width)
-        for line in right:
+        for line in _line_block("Event Rail", "\n".join(self.events), width, max_lines=10):
             print(line[:width])
-        if self.verification:
-            print("-" * width)
-            for line in _line_block("Verification", self.verification, width, max_lines=5):
-                print(line[:width])
-        if self.final:
-            print("-" * width)
-            for line in _line_block("Final", self.final, width, max_lines=5):
-                print(line[:width])
         print("=" * width, flush=True)
 
     def __call__(self, event_type: str, payload: dict) -> None:
@@ -330,6 +344,9 @@ class HarnessTheaterObserver:
             self.final = ""
             self.metrics = {"context": "n/a", "vram": "n/a", "latency": "n/a"}
             self.events.clear()
+            self.transcript.clear()
+            if self.show_prompts != "off":
+                self._add_transcript("user", "prompt", self.prompt)
             self._add_event(f"tools: {', '.join(self.tools)}")
             self._render()
             return
@@ -344,6 +361,8 @@ class HarnessTheaterObserver:
             if prompt and self.show_prompts != "off":
                 limit = 1800 if self.show_prompts == "full" else 700
                 self.prompt = _trim_block(prompt, limit)
+                if not self.transcript or self.transcript[-1]["body"] != self.prompt:
+                    self._add_transcript("user", "prompt", self.prompt)
             self._add_event(f"model request attempt {payload.get('attempt', '?')}")
             self._render()
             return
@@ -355,11 +374,15 @@ class HarnessTheaterObserver:
                 "latency": f"{payload.get('latency_ms')} ms" if payload.get("latency_ms") is not None else self.metrics.get("latency", "n/a"),
             }
             tool_calls = payload.get("tool_calls") or []
+            if self.assistant.strip():
+                self._add_transcript("assistant", "message", self.assistant)
             self._add_event(f"assistant replied ({len(tool_calls)} tool calls)")
             self._render()
             return
         if event_type == "tool_call":
             self._add_event(f"tool call: {payload.get('tool_name')} {json.dumps(payload.get('arguments', {}), ensure_ascii=True)}")
+            tool_body = json.dumps(payload.get("arguments", {}), ensure_ascii=True)
+            self._add_transcript("assistant", f"tool-use {payload.get('tool_name')}", tool_body)
             self._render()
             return
         if event_type == "tool_result":
@@ -369,6 +392,7 @@ class HarnessTheaterObserver:
             if not isinstance(detail, str):
                 detail = json.dumps(detail, ensure_ascii=True)
             self._add_event(f"tool result: {payload.get('tool_name')} [{status}] {detail[:120]}")
+            self._add_transcript("user", f"tool-result {payload.get('tool_name')}", _trim_block(detail, 800), status=status)
             self._render()
             return
         if event_type == "tool_retry":
@@ -381,6 +405,7 @@ class HarnessTheaterObserver:
             return
         if event_type == "mid_task_injection":
             self._add_event(f"injection: {str(payload.get('content', ''))[:120]}")
+            self._add_transcript("user", "injection", _trim_block(str(payload.get("content", "")), 600))
             self._render()
             return
         if event_type == "verification":
@@ -388,11 +413,13 @@ class HarnessTheaterObserver:
             text = json.dumps(result, ensure_ascii=True)
             self.verification = f"{payload.get('method')} -> {'pass' if payload.get('verification_passed') else 'fail'}\n{text}"
             self._add_event(f"verification: {'pass' if payload.get('verification_passed') else 'fail'}")
+            self._add_transcript("user", "verification", self.verification, status="pass" if payload.get("verification_passed") else "fail")
             self._render()
             return
         if event_type in {"timeout", "final_result"}:
             self.final = json.dumps(payload, ensure_ascii=True)
             self._add_event(f"final: {payload.get('status', event_type)}")
+            self._add_transcript("assistant", "final", self.final, status=str(payload.get("status", event_type)))
             self._render()
             print()
             return
