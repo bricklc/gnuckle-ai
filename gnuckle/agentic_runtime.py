@@ -326,7 +326,8 @@ def _run_verification(executor: ToolExecutor, workflow: Workflow) -> dict:
 def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, request_args: dict | None = None,
                         session_mode: str = "fresh_session", max_turns_override: int | None = None,
                         system_prompt_override: str | None = None, server_pid: int | None = None,
-                        context_window: int | None = None, observer=None) -> tuple[dict, Path]:
+                        context_window: int | None = None, observer=None,
+                        model_name: str | None = None, cache_label: str | None = None) -> tuple[dict, Path]:
     request_args = request_args or {}
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -356,10 +357,13 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
         workflow_id=workflow.workflow_id,
         title=workflow.title,
         session_mode=session_mode,
+        model_name=model_name or "unknown model",
+        cache_label=cache_label or "unknown kv",
         workspace=str(workspace_dir),
         system_prompt=system_prompt,
         user_event=user_event,
         max_turns=max_turns,
+        context_window=context_window,
         active_tools=list(workflow.active_tools),
         expected_tools=list(workflow.expected_tools),
     )
@@ -487,6 +491,7 @@ def run_agentic_episode(base_url: str, workflow: Workflow, output_dir: Path, req
                     latency_ms=latency_ms,
                     context_tokens_estimate=context_tokens_estimate,
                     context_percent_used=context_percent_used,
+                    context_window=context_window,
                     hardware_usage=hardware_usage,
                 )
 

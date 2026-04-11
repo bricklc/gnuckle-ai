@@ -499,6 +499,8 @@ def run_session_benchmark(
     server_pid: int | None = None,
     context_window: int | None = None,
     observer=None,
+    model_name: str | None = None,
+    cache_label: str | None = None,
 ) -> dict:
     """Run a full session benchmark and return the results summary."""
     request_args = request_args or {}
@@ -539,9 +541,12 @@ def run_session_benchmark(
                 "workflow_id": bench_id,
                 "title": benchmark["title"],
                 "session_mode": benchmark.get("session", {}).get("mode", "persistent"),
+                "model_name": model_name or "unknown model",
+                "cache_label": cache_label or "unknown kv",
                 "workspace": f"session://{bench_id}",
                 "active_tools": tools,
                 "max_turns": len(turns),
+                "context_window": context_window,
                 "user_event": turns[0]["prompt"] if turns else "",
             },
         )
@@ -632,6 +637,7 @@ def run_session_benchmark(
                             "retrying": retry_count <= MAX_NO_RESPONSE_RETRIES,
                             "reason": "assistant emitted no text and no tool calls",
                             "latency_ms": call_elapsed_ms,
+                            "context_window": context_window,
                         },
                     )
                 if retry_count <= MAX_NO_RESPONSE_RETRIES:
@@ -656,6 +662,7 @@ def run_session_benchmark(
                         "content": assistant_text,
                         "tool_calls": raw_tool_calls,
                         "latency_ms": call_elapsed_ms,
+                        "context_window": context_window,
                     },
                 )
 
@@ -825,6 +832,7 @@ def run_session_benchmark(
                     "latency_ms": turn_elapsed_ms,
                     "tokens_per_second": tokens_per_second,
                     "context_tokens_estimate": context_estimate,
+                    "context_window": context_window,
                     "provider_usage_total": turn_provider_tokens,
                     "provider_usage_cumulative_total": cumulative_provider_tokens,
                     "hardware_usage": hardware,

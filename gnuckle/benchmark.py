@@ -268,6 +268,19 @@ class HarnessTheaterObserver:
         self.audit = deque(maxlen=6)
         self.transcript = deque(maxlen=22)
         self.pending_tools = {}
+        self.model_name = "unknown"
+        self.cache_label = "n/a"
+        self.context_window = None
+
+    def _monitor_header(self) -> str:
+        parts = ["[ Monitoring ]"]
+        if self.model_name:
+            parts.append(f"[ Model {self.model_name} ]")
+        if self.cache_label:
+            parts.append(f"[ KV {self.cache_label} ]")
+        parts.append(f"[ VRAM {self.metrics.get('vram', 'n/a')} ]")
+        parts.append(f"[ Ctx {self.metrics.get('context', 'n/a')} ]")
+        return " ".join(parts)
 
     def _add_audit(self, text: str) -> None:
         self.audit.appendleft(text)
@@ -341,10 +354,21 @@ class HarnessTheaterObserver:
         return f"{mb:.0f} MB"
 
     def _update_metrics(self, payload: dict) -> None:
+        payload_context_window = payload.get("context_window")
+        if payload_context_window not in (None, ""):
+            try:
+                self.context_window = int(payload_context_window)
+            except (TypeError, ValueError):
+                self.context_window = payload_context_window
         context_value = payload.get("context_tokens_estimate")
         if context_value is not None:
             percent = payload.get("context_percent_used")
-            if percent is not None:
+            if self.context_window:
+                if percent is not None:
+                    self.metrics["context"] = f"{int(context_value)}/{self.context_window} ({percent:.1f}%)"
+                else:
+                    self.metrics["context"] = f"{int(context_value)}/{self.context_window}"
+            elif percent is not None:
                 self.metrics["context"] = f"{int(context_value)} est ({percent:.1f}%)"
             else:
                 self.metrics["context"] = f"{int(context_value)} est"
@@ -393,7 +417,7 @@ class HarnessTheaterObserver:
         for line in self._render_transcript(width):
             print(line[:width])
         print("-" * width)
-        for line in _line_block("Monitoring", "\n".join(self.audit), width, max_lines=6):
+        for line in _line_block(self._monitor_header(), "\n".join(self.audit), width, max_lines=6):
             print(line[:width])
         print("=" * width, flush=True)
 
@@ -405,6 +429,13 @@ class HarnessTheaterObserver:
             self.workspace = str(payload.get("workspace", ""))
             self.tools = list(payload.get("active_tools", []))
             self.max_turns = int(payload.get("max_turns", 0) or 0)
+            self.model_name = str(payload.get("model_name", "unknown"))
+            self.cache_label = str(payload.get("cache_label", "n/a"))
+            context_window = payload.get("context_window")
+            try:
+                self.context_window = int(context_window) if context_window is not None else None
+            except (TypeError, ValueError):
+                self.context_window = context_window
             self.metrics = {"context": "n/a", "vram": "n/a", "latency": "n/a"}
             self.activity = "session ready"
             self.audit.clear()
@@ -2097,6 +2128,8 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
                     server_pid=server_pid,
                     context_window=get_context_window(preset),
                     observer=observer,
+                    model_name=model_path.name,
+                    cache_label=label,
                 )
                 print(
                     f"  Episode | status={episode['status']}  "
@@ -2693,6 +2726,8 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                                     server_pid=getattr(server_proc, "pid", None),
                                     context_window=get_context_window(preset),
                                     observer=session_observer,
+                                    model_name=model_path.name,
+                                    cache_label=label,
                                 )
                                 # Save with cache label
                                 session_path = output_path / f"session_{bench['id']}_{sanitize_label(label)}.json"
@@ -2721,6 +2756,8 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                                 server_pid=getattr(server_proc, "pid", None),
                                 context_window=get_context_window(preset),
                                 observer=session_observer,
+                                model_name=model_path.name,
+                                cache_label=label,
                             )
                             session_out["meta"]["cache_label"] = label
                             session_out["meta"]["throughput_benchmark"] = throughput_benchmark
