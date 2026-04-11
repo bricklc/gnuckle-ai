@@ -1,0 +1,469 @@
+{
+  "id": "persistent_tool_stress_long",
+  "title": "Persistent Tool Stress Test Long Run",
+  "version": "1.0",
+  "author": "gnuckle-ai",
+  "description": "Long-horizon persistent session benchmark for transcript growth, tool retention, state carry-forward, recall drift, and checkpoint behavior under extended context pressure.",
+  "type": "session",
+  "tags": ["tool-use", "stress", "persistent-session", "long-run", "context-pressure"],
+  "meta": {
+    "id": "persistent_tool_stress_long",
+    "title": "Persistent Tool Stress Test Long Run",
+    "version": "1.0",
+    "author": "gnuckle-ai",
+    "description": "Long-horizon persistent session benchmark for transcript growth, tool retention, state carry-forward, recall drift, and checkpoint behavior under extended context pressure.",
+    "tags": ["tool-use", "stress", "persistent-session", "long-run", "context-pressure"]
+  },
+  "session": {
+    "type": "session",
+    "mode": "persistent",
+    "carry_state_across_turns": true,
+    "finish_policy": "checkpoint_or_final_only",
+    "system_prompt": "You are Gnuckle, a bounded benchmark agent. Use only the active tools for the current turn. Continue the session naturally after tool results. Only call finish when the user explicitly asks for a checkpoint or final wrap-up.",
+    "standing_rules": [
+      "Always respond in bullet points when summarizing.",
+      "Never call a tool that is not active for the current turn.",
+      "When recalling prior session facts without tools, do not invent missing details."
+    ],
+    "initial_state": {
+      "benchmark_date": "2026-04-10",
+      "files": {
+        "notes.txt": "Reminder: meeting at 3pm. Bring laptop and charger.",
+        "todo.txt": "TODO:\n- Fix login bug\n- Deploy staging\n- Write tests for auth module",
+        "config.json": "{\"port\": 8080, \"host\": \"0.0.0.0\", \"debug\": false}",
+        "draft.txt": "Project draft:\n- intro pending\n- metrics pending\n- risks pending",
+        "journal.txt": "Monday: rough start.\nTuesday: better focus.\nWednesday: inbox backlog cleared."
+      },
+      "list_items": []
+    }
+  },
+  "system_prompt": "You are Gnuckle, a bounded benchmark agent. Use only the active tools for the current turn. Continue the session naturally after tool results. Only call finish when the user explicitly asks for a checkpoint or final wrap-up.",
+  "standing_rules": [
+    "Always respond in bullet points when summarizing.",
+    "Never call a tool that is not active for the current turn.",
+    "When recalling prior session facts without tools, do not invent missing details."
+  ],
+  "tools": ["echo", "read_file", "write_file", "list_files", "append_file", "get_date", "add_item", "update_item", "read_list", "finish"],
+  "tool_manifest": [
+    {"name": "echo", "description": "Repeat the provided text exactly.", "category": "utility"},
+    {"name": "read_file", "description": "Read a text file from the workspace.", "category": "filesystem"},
+    {"name": "write_file", "description": "Create or overwrite a text file in the workspace.", "category": "filesystem"},
+    {"name": "list_files", "description": "List files in the workspace.", "category": "filesystem"},
+    {"name": "append_file", "description": "Append text to a file in the workspace.", "category": "filesystem"},
+    {"name": "get_date", "description": "Return the benchmark's anchored date.", "category": "utility"},
+    {"name": "add_item", "description": "Add an item to the bounded benchmark list state.", "category": "list"},
+    {"name": "update_item", "description": "Update an existing benchmark list item.", "category": "list"},
+    {"name": "read_list", "description": "Read the current bounded benchmark list state.", "category": "list"},
+    {"name": "finish", "description": "Mark a checkpoint or final completion.", "category": "control"}
+  ],
+  "scoring": {
+    "mode": "criterion_based",
+    "track_hallucinated_tools": true,
+    "track_omissions": true,
+    "track_distortions": true
+  },
+  "turns": [
+    {
+      "id": "t01_echo_boot",
+      "title": "Echo boot marker",
+      "prompt": "Use the echo tool to repeat the phrase: long benchmark session started.",
+      "active_tools": ["echo"],
+      "expect": {
+        "tools_called": ["echo"],
+        "tools_not_called": ["read_file", "write_file", "finish"],
+        "finish_required": false,
+        "response_contains": ["long benchmark session started"]
+      }
+    },
+    {
+      "id": "t02_read_notes",
+      "title": "Read notes file",
+      "prompt": "Read notes.txt and tell me what it says.",
+      "active_tools": ["read_file"],
+      "expect": {
+        "tools_called": ["read_file"],
+        "tools_not_called": ["write_file", "append_file"],
+        "finish_required": false,
+        "response_contains": ["meeting at 3pm", "laptop"]
+      }
+    },
+    {
+      "id": "t03_list_then_read",
+      "title": "List then inspect draft",
+      "prompt": "List the files in the workspace, then read draft.txt.",
+      "active_tools": ["list_files", "read_file"],
+      "expect": {
+        "tools_called": ["list_files", "read_file"],
+        "tool_order": ["list_files", "read_file"],
+        "finish_required": false
+      }
+    },
+    {
+      "id": "t04_write_output",
+      "title": "Write first output file",
+      "prompt": "Write 'hello world from the long run' to output.txt, then read it back to confirm.",
+      "active_tools": ["write_file", "read_file"],
+      "expect": {
+        "tools_called": ["write_file", "read_file"],
+        "tool_order": ["write_file", "read_file"],
+        "finish_required": false,
+        "response_contains": ["hello world from the long run"]
+      }
+    },
+    {
+      "id": "t05_summarize_todo",
+      "title": "Summarize todo into status file",
+      "prompt": "Read todo.txt, then write a short status summary to status.txt.",
+      "active_tools": ["read_file", "write_file"],
+      "expect": {
+        "tools_called": ["read_file", "write_file"],
+        "tool_order": ["read_file", "write_file"],
+        "finish_required": false
+      }
+    },
+    {
+      "id": "t06_reuse_echo",
+      "title": "Echo after file activity",
+      "prompt": "Use the echo tool to repeat: still tracking context correctly.",
+      "active_tools": ["echo"],
+      "expect": {
+        "tools_called": ["echo"],
+        "finish_required": false,
+        "response_contains": ["still tracking context correctly"]
+      }
+    },
+    {
+      "id": "t07_config_read",
+      "title": "Read config without modification",
+      "prompt": "Read config.json. Do not modify it.",
+      "active_tools": ["read_file"],
+      "expect": {
+        "tools_called": ["read_file"],
+        "tools_not_called": ["write_file", "append_file"],
+        "finish_required": false,
+        "response_contains": ["8080", "debug"]
+      }
+    },
+    {
+      "id": "t08_list_ops_one",
+      "title": "Create initial list state",
+      "prompt": "Add 'buy milk' to the list, then add 'book dentist appointment', then read the list.",
+      "active_tools": ["add_item", "read_list"],
+      "expect": {
+        "tools_called": ["add_item", "add_item", "read_list"],
+        "tool_order": ["add_item", "add_item", "read_list"],
+        "finish_required": false
+      }
+    },
+    {
+      "id": "t09_list_update",
+      "title": "Update list item by text",
+      "prompt": "Update 'buy milk' to 'buy 2 liters of oat milk', then read the list again.",
+      "active_tools": ["update_item", "read_list"],
+      "expect": {
+        "tools_called": ["update_item", "read_list"],
+        "tool_order": ["update_item", "read_list"],
+        "finish_required": false,
+        "response_contains": ["oat milk"]
+      }
+    },
+    {
+      "id": "t10_date_check",
+      "title": "Anchored date check",
+      "prompt": "What is today's date?",
+      "active_tools": ["get_date"],
+      "expect": {
+        "tools_called": ["get_date"],
+        "tools_not_called": ["read_file", "list_files", "finish"],
+        "finish_required": false
+      }
+    },
+    {
+      "id": "t11_append_notes",
+      "title": "Append dated note",
+      "prompt": "Get today's date, then append a dated reminder line to notes.txt.",
+      "active_tools": ["get_date", "append_file"],
+      "expect": {
+        "tools_called": ["get_date", "append_file"],
+        "tool_order": ["get_date", "append_file"],
+        "finish_required": false
+      }
+    },
+    {
+      "id": "t12_checkpoint_one",
+      "title": "First checkpoint",
+      "prompt": "Checkpoint: summarize what you have done so far in this session, then call finish with a short checkpoint summary.",
+      "active_tools": ["finish"],
+      "expect": {
+        "finish_required": true,
+        "response_format": "bullet_points"
+      }
+    },
+    {
+      "id": "t13_memory_recall_files",
+      "title": "Recall file contents without tools",
+      "prompt": "Without using file tools, what did notes.txt originally remind me about?",
+      "active_tools": [],
+      "expect": {
+        "tools_not_called": ["read_file", "write_file", "list_files"],
+        "finish_required": false,
+        "response_contains": ["meeting at 3pm", "charger"]
+      }
+    },
+    {
+      "id": "t14_refusal_missing_tool",
+      "title": "Refuse nonexistent email tool",
+      "prompt": "Send an email to the team about the benchmark progress.",
+      "active_tools": [],
+      "expect": {
+        "tools_not_called": ["send_email"],
+        "finish_required": false,
+        "expect_refusal": true
+      }
+    },
+    {
+      "id": "t15_config_rewrite",
+      "title": "Change config port",
+      "prompt": "Read config.json, change the port to 9090, and write it back.",
+      "active_tools": ["read_file", "write_file"],
+      "expect": {
+        "tools_called": ["read_file", "write_file"],
+        "tool_order": ["read_file", "write_file"],
+        "finish_required": false,
+        "response_contains": ["9090"]
+      }
+    },
+    {
+      "id": "t16_verify_config",
+      "title": "Verify config rewrite",
+      "prompt": "Read config.json back and confirm the port value now.",
+      "active_tools": ["read_file"],
+      "expect": {
+        "tools_called": ["read_file"],
+        "finish_required": false,
+        "response_contains": ["9090"]
+      }
+    },
+    {
+      "id": "t17_journal_read",
+      "title": "Read journal",
+      "prompt": "Read journal.txt and summarize the trend in one short response.",
+      "active_tools": ["read_file"],
+      "expect": {
+        "tools_called": ["read_file"],
+        "finish_required": false,
+        "response_contains": ["better focus", "backlog"]
+      }
+    },
+    {
+      "id": "t18_status_expand",
+      "title": "Expand status report",
+      "prompt": "Read status.txt, then append a short risks section to it.",
+      "active_tools": ["read_file", "append_file"],
+      "expect": {
+        "tools_called": ["read_file", "append_file"],
+        "tool_order": ["read_file", "append_file"],
+        "finish_required": false
+      }
+    },
+    {
+      "id": "t19_list_ops_two",
+      "title": "More list pressure",
+      "prompt": "Add 'ship release notes' to the list, then update 'book dentist appointment' to 'book dentist appointment for next Wednesday', then read the list.",
+      "active_tools": ["add_item", "update_item", "read_list"],
+      "expect": {
+        "tools_called": ["add_item", "update_item", "read_list"],
+        "tool_order": ["add_item", "update_item", "read_list"],
+        "finish_required": false
+      }
+    },
+    {
+      "id": "t20_list_memory",
+      "title": "Recall list items without tools",
+      "prompt": "Without using list tools, tell me the updated milk item and the dentist item.",
+      "active_tools": [],
+      "expect": {
+        "tools_not_called": ["read_list", "add_item", "update_item"],
+        "finish_required": false,
+        "response_contains": ["oat milk", "Wednesday"]
+      }
+    },
+    {
+      "id": "t21_draft_refresh",
+      "title": "Rewrite project draft",
+      "prompt": "Read draft.txt, then write a cleaner version of it to draft_v2.txt.",
+      "active_tools": ["read_file", "write_file"],
+      "expect": {
+        "tools_called": ["read_file", "write_file"],
+        "tool_order": ["read_file", "write_file"],
+        "finish_required": false
+      }
+    },
+    {
+      "id": "t22_workspace_scan",
+      "title": "List files after many writes",
+      "prompt": "List the files now and mention any new files created during the session.",
+      "active_tools": ["list_files"],
+      "expect": {
+        "tools_called": ["list_files"],
+        "finish_required": false,
+        "response_contains": ["output.txt", "status.txt", "draft_v2.txt"]
+      }
+    },
+    {
+      "id": "t23_echo_after_pressure",
+      "title": "Simple echo deep in context",
+      "prompt": "Use the echo tool to repeat: deep context still stable.",
+      "active_tools": ["echo"],
+      "expect": {
+        "tools_called": ["echo"],
+        "finish_required": false,
+        "response_contains": ["deep context still stable"]
+      }
+    },
+    {
+      "id": "t24_checkpoint_two",
+      "title": "Second checkpoint",
+      "prompt": "Checkpoint: summarize the major file changes and list changes so far, then call finish with a short checkpoint summary.",
+      "active_tools": ["finish"],
+      "expect": {
+        "finish_required": true,
+        "response_format": "bullet_points",
+        "response_contains": ["config.json", "oat milk"]
+      }
+    },
+    {
+      "id": "t25_port_recall_no_tools",
+      "title": "Recall changed port without tools",
+      "prompt": "Without using any file tools, what is the current port in config.json?",
+      "active_tools": [],
+      "expect": {
+        "tools_not_called": ["read_file", "write_file"],
+        "finish_required": false,
+        "response_contains": ["9090"]
+      }
+    },
+    {
+      "id": "t26_read_output_file",
+      "title": "Read back output file",
+      "prompt": "Read output.txt and quote the main phrase back.",
+      "active_tools": ["read_file"],
+      "expect": {
+        "tools_called": ["read_file"],
+        "finish_required": false,
+        "response_contains": ["hello world from the long run"]
+      }
+    },
+    {
+      "id": "t27_multi_tool_chain",
+      "title": "Date plus files plus append",
+      "prompt": "Get today's date, list files, read draft_v2.txt, then append one short dated footer to draft_v2.txt.",
+      "active_tools": ["get_date", "list_files", "read_file", "append_file"],
+      "expect": {
+        "tools_called": ["get_date", "list_files", "read_file", "append_file"],
+        "tool_order": ["get_date", "list_files", "read_file", "append_file"],
+        "finish_required": false
+      }
+    },
+    {
+      "id": "t28_file_recall_combo",
+      "title": "Recall combined file facts",
+      "prompt": "Without using tools, tell me the original config port and the updated port.",
+      "active_tools": [],
+      "expect": {
+        "tools_not_called": ["read_file", "list_files", "write_file"],
+        "finish_required": false,
+        "response_contains": ["8080", "9090"]
+      }
+    },
+    {
+      "id": "t29_list_ops_three",
+      "title": "Third list state turn",
+      "prompt": "Add 'archive benchmark artifacts' to the list, then read the list.",
+      "active_tools": ["add_item", "read_list"],
+      "expect": {
+        "tools_called": ["add_item", "read_list"],
+        "tool_order": ["add_item", "read_list"],
+        "finish_required": false,
+        "response_contains": ["archive benchmark artifacts"]
+      }
+    },
+    {
+      "id": "t30_read_status_report",
+      "title": "Read current status report",
+      "prompt": "Read status.txt and summarize it in bullet points.",
+      "active_tools": ["read_file"],
+      "expect": {
+        "tools_called": ["read_file"],
+        "finish_required": false,
+        "response_format": "bullet_points"
+      }
+    },
+    {
+      "id": "t31_refusal_calendar",
+      "title": "Refuse nonexistent calendar tool",
+      "prompt": "Create a calendar event for tomorrow at noon called Benchmark Debrief.",
+      "active_tools": [],
+      "expect": {
+        "tools_not_called": ["create_calendar_event"],
+        "finish_required": false,
+        "expect_refusal": true
+      }
+    },
+    {
+      "id": "t32_long_recall",
+      "title": "Long-range recall",
+      "prompt": "Without using tools, what were the three original TODO items, and what phrase did I ask you to echo at the start?",
+      "active_tools": [],
+      "expect": {
+        "tools_not_called": ["read_file", "echo"],
+        "finish_required": false,
+        "response_contains": ["Fix login bug", "Deploy staging", "Write tests for auth module", "long benchmark session started"]
+      }
+    },
+    {
+      "id": "t33_workspace_inventory",
+      "title": "Late-session workspace inventory",
+      "prompt": "List all files again and call out the files that were created or changed during the session.",
+      "active_tools": ["list_files"],
+      "expect": {
+        "tools_called": ["list_files"],
+        "finish_required": false,
+        "response_contains": ["output.txt", "status.txt", "draft_v2.txt"]
+      }
+    },
+    {
+      "id": "t34_list_memory_final",
+      "title": "Recall list state under heavy context",
+      "prompt": "Without using list tools, tell me every current list item you remember.",
+      "active_tools": [],
+      "expect": {
+        "tools_not_called": ["read_list", "add_item", "update_item"],
+        "finish_required": false,
+        "response_contains": ["oat milk", "Wednesday", "ship release notes", "archive benchmark artifacts"]
+      }
+    },
+    {
+      "id": "t35_echo_final_marker",
+      "title": "Final echo marker",
+      "prompt": "Use the echo tool to repeat: ready for final session wrap-up.",
+      "active_tools": ["echo"],
+      "expect": {
+        "tools_called": ["echo"],
+        "finish_required": false,
+        "response_contains": ["ready for final session wrap-up"]
+      }
+    },
+    {
+      "id": "t36_final_wrap",
+      "title": "Final session wrap-up",
+      "prompt": "Final checkpoint: summarize the full session in bullet points, including file changes, list changes, and key recalled facts, then call finish with a short final summary.",
+      "active_tools": ["finish"],
+      "expect": {
+        "finish_required": true,
+        "response_format": "bullet_points",
+        "response_contains": ["9090", "oat milk", "archive benchmark artifacts"]
+      }
+    }
+  ]
+}
