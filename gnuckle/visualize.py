@@ -659,9 +659,40 @@ def load_agentic_results(results_dir: Path) -> dict[str, dict]:
     return by_cache
 
 
+def _session_cache_label_from_path(file_path: Path, benchmark_id: str | None) -> str:
+    stem = file_path.stem
+    prefix = f"session_{benchmark_id}_" if benchmark_id else "session_"
+    if benchmark_id and stem == f"session_{benchmark_id}":
+        return "f16"
+    if stem.startswith(prefix):
+        suffix = stem[len(prefix):]
+        return canonical_cache_label(suffix) if suffix else "f16"
+    return "unknown"
+
+
+def load_session_results(results_dir: Path) -> dict[str, dict]:
+    files = sorted(results_dir.glob("session_*.json"), reverse=True)
+    by_cache = {}
+    for file_path in files:
+        try:
+            data = json.loads(file_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        meta = data.get("meta", {})
+        if meta.get("type") != "session":
+            continue
+        label = _session_cache_label_from_path(file_path, meta.get("benchmark_id"))
+        if label not in by_cache:
+            data["_cache_label"] = label
+            by_cache[label] = data
+    return by_cache
+
+
 def detect_benchmark_mode(results_dir: Path) -> str | None:
     if any(results_dir.glob("agentic_*.json")):
         return "agentic"
+    if any(results_dir.glob("session_*.json")):
+        return "session"
     if any(results_dir.glob("benchmark_*.json")):
         return "legacy"
     return None
@@ -2130,6 +2161,239 @@ new Chart(document.getElementById('vramPassChart'), {{
 </body></html>"""
 
 
+def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
+    ordered = ordered_cache_labels(by_cache.keys())
+    first = by_cache[ordered[0]]
+    meta = first.get("meta", {})
+    model_name = escape(str(first.get("model_id", "unknown model")))
+    benchmark_title = escape(str(meta.get("benchmark_title", meta.get("benchmark_id", "session benchmark"))))
+    generated_at = meta.get("timestamp", datetime.now().isoformat())
+    try:
+        timestamp = datetime.fromisoformat(generated_at).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        timestamp = generated_at
+
+    baseline = "f16" if "f16" in ordered else ordered[0]
+    baseline_data = by_cache[baseline]
+    baseline_agg = baseline_data.get("aggregate", {})
+    benchmark_id = str(meta.get("benchmark_id", "session"))
+    turns = first.get("turns", [])
+    turn_labels = [str(turn.get("turn_id", turn.get("turn", "?"))) for turn in turns]
+
+    def agg(cache: str) -> dict:
+        return by_cache[cache].get("aggregate", {})
+
+    def cache_turn_map(cache: str) -> dict:
+        return {
+            str(turn.get("turn_id", turn.get("turn", "?"))): turn
+            for turn in by_cache[cache].get("turns", [])
+        }
+
+    turn_maps = {cache: cache_turn_map(cache) for cache in ordered}
+    table_rows = []
+    for cache in ordered:
+        summary = agg(cache)
+        avg_score = float(summary.get("average_score", 0) or 0)
+        pass_rate = float(summary.get("pass_rate", 0) or 0)
+        elapsed = float(summary.get("session_elapsed_s", 0) or 0)
+        vram_peak = float(((summary.get("final_hardware") or {}).get("vram_peak_mb", 0)) or 0)
+        delta_score = avg_score - float(baseline_agg.get("average_score", 0) or 0)
+        table_rows.append(
+            "<tr>"
+            f"<td><span class='cache-pill' style='--cache:{cache_color(cache)}'>{escape(cache)}</span></td>"
+            f"<td>{format_num(avg_score, 3)}</td>"
+            f"<td>{format_pct(pass_rate * 100, 1)}</td>"
+            f"<td>{int(summary.get('pass_count', 0) or 0)}/{int(meta.get('total_turns', 0) or len(turn_labels))}</td>"
+            f"<td>{format_num(elapsed, 1)}</td>"
+            f"<td>{format_num(vram_peak, 0)}</td>"
+            f"<td class='{delta_class(delta_score)}'>{format_delta(delta_score)}</td>"
+            "</tr>"
+        )
+
+    matrix_rows = []
+    widest_turn = "n/a"
+    max_spread = 0.0
+    for turn_label in turn_labels:
+        score_values = []
+        row = [f"<td><strong>{escape(turn_label)}</strong></td>"]
+        baseline_turn = turn_maps.get(baseline, {}).get(turn_label, {})
+        baseline_score = (baseline_turn.get("scores") or {}).get("turn_score")
+        for cache in ordered:
+            turn = turn_maps.get(cache, {}).get(turn_label, {})
+            score = (turn.get("scores") or {}).get("turn_score")
+            if score is not None:
+                score_values.append(float(score))
+            delta = None if baseline_score is None or score is None else float(score) - float(baseline_score)
+            cell_class = delta_class(delta)
+            score_text = "n/a" if score is None else format_num(score, 3)
+            delta_text = "" if cache == baseline else f"<div class='delta {cell_class}'>{format_delta(delta)}</div>"
+            row.append(f"<td class='{cell_class}'>{score_text}{delta_text}</td>")
+        spread = (max(score_values) - min(score_values)) if score_values else 0.0
+        if spread > max_spread:
+            max_spread = spread
+            widest_turn = turn_label
+        row.append(f"<td>{format_num(spread, 3)}</td>")
+        matrix_rows.append("<tr>" + "".join(row) + "</tr>")
+
+    vram_datasets = []
+    ttft_datasets = []
+    for cache in ordered:
+        turns_for_cache = by_cache[cache].get("turns", [])
+        vram_datasets.append(
+            {
+                "label": cache,
+                "data": [((turn.get("metrics") or {}).get("hardware") or {}).get("vram_peak_mb") for turn in turns_for_cache],
+                "borderColor": cache_color(cache),
+                "backgroundColor": "transparent",
+                "borderWidth": 3 if cache == baseline else 2,
+                "pointRadius": 2,
+                "spanGaps": True,
+                "tension": 0.25,
+            }
+        )
+        ttft_datasets.append(
+            {
+                "label": cache,
+                "data": [((turn.get("metrics") or {}).get("ttft_ms")) for turn in turns_for_cache],
+                "borderColor": cache_color(cache),
+                "backgroundColor": "transparent",
+                "borderWidth": 3 if cache == baseline else 2,
+                "pointRadius": 2,
+                "spanGaps": True,
+                "tension": 0.25,
+            }
+        )
+
+    best_cache = max(ordered, key=lambda cache: float(agg(cache).get("average_score", 0) or 0))
+    version = _get_version()
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>session benchmark dashboard - {model_name}</title>
+<style>
+:root {{
+  --paper: #fffdf8;
+  --paper-2: #f6f0e3;
+  --ink: #191814;
+  --muted: #6b675c;
+  --line: rgba(30, 26, 18, 0.12);
+  --shadow: 0 18px 45px rgba(44, 34, 18, 0.08);
+  --radius: 20px;
+}}
+* {{ box-sizing: border-box; }}
+body {{ margin: 0; color: var(--ink); background:
+  radial-gradient(circle at top right, rgba(23,77,58,0.1), transparent 26%),
+  radial-gradient(circle at left center, rgba(187,122,28,0.13), transparent 30%),
+  linear-gradient(180deg, #f6f1e8 0%, #efe5d3 100%);
+  font-family: Georgia, "Times New Roman", serif; }}
+.dash {{ max-width: 1520px; margin: 0 auto; padding: 24px; }}
+.hero {{ background: linear-gradient(140deg, rgba(18,64,49,0.98), rgba(56,38,14,0.94)); color: #f6f1e7; border-radius: 30px; padding: 28px; box-shadow: var(--shadow); margin-bottom: 18px; }}
+.eyebrow {{ font: 600 11px/1.2 "Segoe UI", sans-serif; letter-spacing: 0.18em; text-transform: uppercase; opacity: 0.78; margin-bottom: 10px; }}
+.hero h1 {{ margin: 0; font-size: 40px; line-height: 1.02; }}
+.hero .sub {{ margin-top: 10px; color: rgba(246,241,231,0.78); font: 500 13px/1.6 "Segoe UI", sans-serif; }}
+.stats-grid, .panel-grid {{ display: grid; gap: 14px; }}
+.stats-grid {{ grid-template-columns: repeat(4, minmax(0,1fr)); margin-bottom: 18px; }}
+.panel-grid {{ grid-template-columns: 1fr 1fr; }}
+.card, .panel {{ background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }}
+.card {{ padding: 18px; }}
+.panel {{ padding: 20px; }}
+.card .val {{ font-size: 28px; font-weight: 700; }}
+.card .lbl {{ margin-top: 6px; color: var(--muted); font: 600 11px/1.3 "Segoe UI", sans-serif; letter-spacing: 0.08em; text-transform: uppercase; }}
+.card .sub, .section-sub {{ margin-top: 6px; color: var(--muted); font: 500 12px/1.5 "Segoe UI", sans-serif; }}
+.section-title {{ margin: 0 0 10px; font-size: 18px; }}
+.cache-pill {{ display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 999px; background: color-mix(in srgb, var(--cache) 12%, white); color: var(--ink); font: 700 11px/1 "Segoe UI", sans-serif; text-transform: uppercase; letter-spacing: 0.06em; }}
+.cache-pill::before {{ content: ""; width: 9px; height: 9px; border-radius: 999px; background: var(--cache); }}
+.delta {{ margin-top: 4px; font: 700 11px/1 "Segoe UI", sans-serif; }}
+.delta-up {{ color: #1b7f3b; }}
+.delta-down {{ color: #b42318; }}
+.delta-flat {{ color: var(--muted); }}
+table {{ width: 100%; border-collapse: collapse; }}
+th, td {{ padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }}
+th {{ color: var(--muted); font: 700 11px/1.2 "Segoe UI", sans-serif; letter-spacing: 0.08em; text-transform: uppercase; }}
+td {{ font: 500 13px/1.45 "Segoe UI", sans-serif; }}
+tr:last-child td {{ border-bottom: none; }}
+.matrix-wrap {{ overflow-x: auto; }}
+.chart-panel {{ margin-top: 18px; }}
+.chart-shell {{ position: relative; width: 100%; height: 320px; }}
+td.delta-up {{ background: rgba(27,127,59,0.06); }}
+td.delta-down {{ background: rgba(180,35,24,0.06); }}
+.footer {{ margin-top: 16px; color: var(--muted); font: 500 11px/1.4 "Segoe UI", sans-serif; }}
+@media (max-width: 1100px) {{ .stats-grid, .panel-grid {{ grid-template-columns: 1fr; }} }}
+</style></head><body>
+<div class="dash">
+  <section class="hero">
+    <div class="eyebrow">Session benchmark comparison</div>
+    <h1>{benchmark_title}</h1>
+    <div class="sub">{model_name} &middot; {escape(timestamp)} &middot; benchmark {escape(benchmark_id)} &middot; baseline {escape(baseline)}</div>
+  </section>
+  <section class="stats-grid">
+    <div class="card"><div class="val">{escape(best_cache)}</div><div class="lbl">Best cache</div><div class="sub">Highest average session score across compared quants.</div></div>
+    <div class="card"><div class="val">{format_num(agg(best_cache).get('average_score', 0), 3)}</div><div class="lbl">Best average score</div><div class="sub">Session-wide average over all authored turns.</div></div>
+    <div class="card"><div class="val">{widest_turn}</div><div class="lbl">Widest turn spread</div><div class="sub">Turn with the largest score variation across cache quants.</div></div>
+    <div class="card"><div class="val">{int(meta.get('total_turns', len(turn_labels)) or len(turn_labels))}</div><div class="lbl">Turns in session</div><div class="sub">Persistent transcript depth for the stress run.</div></div>
+  </section>
+  <section class="panel-grid">
+    <div class="panel">
+      <h2 class="section-title">Cache leaderboard</h2>
+      <p class="section-sub">Session score, pass rate, elapsed time, and VRAM peak by quant.</p>
+      <table>
+        <tr><th>Cache</th><th>Avg score</th><th>Pass rate</th><th>Passes</th><th>Time (s)</th><th>VRAM peak</th><th>Delta vs {escape(baseline)}</th></tr>
+        {''.join(table_rows)}
+      </table>
+    </div>
+    <div class="panel">
+      <h2 class="section-title">What happened</h2>
+      <p class="section-sub">The folder was valid. The visualizer just did not recognize session benchmark filenames before this fix.</p>
+      <p class="section-sub">This page now compares session runs the same way the other dashboards compare legacy and agentic outputs.</p>
+    </div>
+  </section>
+  <section class="panel chart-panel">
+    <h2 class="section-title">VRAM through session turns</h2>
+    <p class="section-sub">Peak VRAM by turn across all compared cache quants.</p>
+    <div class="chart-shell"><canvas id="vramTurnChart"></canvas></div>
+  </section>
+  <section class="panel chart-panel">
+    <h2 class="section-title">TTFT through session turns</h2>
+    <p class="section-sub">Time to first token by turn across all compared cache quants.</p>
+    <div class="chart-shell"><canvas id="ttftTurnChart"></canvas></div>
+  </section>
+  <section class="panel chart-panel">
+    <h2 class="section-title">Turn score delta matrix</h2>
+    <p class="section-sub">Every authored session turn, with score deltas against the {escape(baseline)} baseline.</p>
+    <div class="matrix-wrap">
+      <table>
+        <tr><th>Turn</th>{''.join(f'<th>{escape(cache)}</th>' for cache in ordered)}<th>Spread</th></tr>
+        {''.join(matrix_rows)}
+      </table>
+    </div>
+  </section>
+  <div class="footer">generated by gnuckle {escape(version)}</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const gridColor = 'rgba(107,103,92,0.16)';
+const tickColor = '#6b675c';
+const tickFont = {{ size: 10 }};
+function makeLine(id, labels, datasets, yTitle) {{
+  new Chart(document.getElementById(id), {{
+    type: 'line',
+    data: {{ labels, datasets }},
+    options: {{
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {{ legend: {{ display: true }} }},
+      scales: {{
+        x: {{ ticks: {{ color: tickColor, font: tickFont, maxRotation: 45, minRotation: 45 }}, grid: {{ color: gridColor }} }},
+        y: {{ ticks: {{ color: tickColor, font: tickFont }}, grid: {{ color: gridColor }}, title: {{ display: true, text: yTitle, color: tickColor, font: {{ size: 11 }} }} }}
+      }}
+    }}
+  }});
+}}
+makeLine('vramTurnChart', {json.dumps(turn_labels)}, {json.dumps(vram_datasets)}, 'VRAM peak (MB)');
+makeLine('ttftTurnChart', {json.dumps(turn_labels)}, {json.dumps(ttft_datasets)}, 'TTFT (ms)');
+</script>
+</body></html>"""
+
+
 def _get_version():
     try:
         from gnuckle import __version__
@@ -2186,6 +2450,19 @@ def run_visualize(results_dir: str):
         else:
             html = build_agentic_html(first_data)
             out_file = results_path / "agentic_benchmark_dashboard.html"
+    elif benchmark_mode == "session":
+        session_by_cache = load_session_results(results_path)
+        if not session_by_cache:
+            print(f"  no session benchmark JSONs in: {results_path}")
+            print("  folder empty. ape no draw nothing. run benchmark first.")
+            sys.exit(1)
+        print("  mode: session")
+        print(f"  found {len(session_by_cache)} cache type(s): {', '.join(session_by_cache.keys())}")
+        first_data = next(iter(session_by_cache.values()))
+        print(f"  benchmark: {first_data.get('meta', {}).get('benchmark_title', first_data.get('meta', {}).get('benchmark_id', 'unknown'))}")
+        ape_print("loading")
+        html = build_session_comparison_html(session_by_cache)
+        out_file = results_path / "session_benchmark_dashboard.html"
     else:
         by_cache = load_results(results_path)
 
