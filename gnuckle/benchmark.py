@@ -201,6 +201,23 @@ def print_info(text):
     print(f"     {text}")
 
 
+def _is_interactive_terminal() -> bool:
+    try:
+        return bool(sys.stdin.isatty() and sys.stdout.isatty())
+    except Exception:
+        return False
+
+
+def render_progress(label: str, current: int, total: int, width: int = 28, done: bool = False) -> None:
+    total = max(1, int(total))
+    current = max(0, min(int(current), total))
+    filled = round((current / total) * width)
+    bar = "#" * filled + "-" * (width - filled)
+    percent = round((current / total) * 100)
+    end = "\n" if done else "\r"
+    print(f"  [{bar}] {percent:>3}%  {label}", end=end, flush=True)
+
+
 def sanitize_label(text: str) -> str:
     cleaned = "".join(ch.lower() if ch.isalnum() else "-" for ch in (text or "unknown"))
     while "--" in cleaned:
@@ -229,12 +246,16 @@ def format_elapsed(elapsed_s: float) -> str:
 def prompt_open_visualizer(output_path: Path, elapsed_s: float) -> None:
     from gnuckle.visualize import run_visualize
 
+    out_file = run_visualize(str(output_path))
+    if not _is_interactive_terminal():
+        print(f"  visualizer banana is saved in {out_file} for viewing later.")
+        return
+
     print()
     choice = input(
         f"  benchmark is complete. it took {format_elapsed(elapsed_s)}. "
         "do you want to open the visualizer now? [y/n]: "
     ).strip().lower()
-    out_file = run_visualize(str(output_path))
     if choice in ("y", ""):
         try:
             webbrowser.open(out_file.resolve().as_uri())
@@ -760,6 +781,7 @@ def wait_for_server(port, timeout=SERVER_WAIT_S):
                     temperature=0,
                 )
                 ape_print("server_up")
+                render_progress("server ready", timeout, timeout, done=True)
                 return True
             except Exception as exc:
                 if not is_server_loading_error(exc):
@@ -767,7 +789,10 @@ def wait_for_server(port, timeout=SERVER_WAIT_S):
         if not poked and time.time() > deadline - timeout / 2:
             ape_print("loading")
             poked = True
+        elapsed = min(timeout, max(0, round(timeout - (deadline - time.time()))))
+        render_progress("waiting for server", elapsed, timeout, done=False)
         time.sleep(1)
+    render_progress("server wait timed out", timeout, timeout, done=True)
     return False
 
 def warmup_server(port, preset=None, system_prompt=None, timeout=WARMUP_WAIT_S):
@@ -789,6 +814,7 @@ def warmup_server(port, preset=None, system_prompt=None, timeout=WARMUP_WAIT_S):
             )
             content = (resp.choices[0].message.content or "").strip() if resp.choices else ""
             if content or resp.choices:
+                render_progress("model warmup complete", timeout, timeout, done=True)
                 print("  >> warmup done. model answer received.")
                 return True
         except Exception as exc:
@@ -797,7 +823,10 @@ def warmup_server(port, preset=None, system_prompt=None, timeout=WARMUP_WAIT_S):
                 announced = True
             if not is_server_loading_error(exc):
                 print(f"  >> warmup retry after startup error: {exc}")
+        elapsed = min(timeout, max(0, round(timeout - (deadline - time.time()))))
+        render_progress("warming model", elapsed, timeout, done=False)
         time.sleep(2)
+    render_progress("warmup timed out", timeout, timeout, done=True)
     return False
 
 def kill_server(proc):
@@ -1486,6 +1515,12 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
 
             episodes = []
             for run_num in range(1, run_count + 1):
+                render_progress(
+                    f"{label} {workflow.workflow_id} run {run_num}/{run_count}",
+                    run_num - 1,
+                    run_count,
+                    done=False,
+                )
                 if run_count > 1:
                     print_step(f"run {run_num}/{run_count}")
                 episode, _workspace_dir = run_agentic_episode(
@@ -1508,6 +1543,12 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
                     f"ms={episode['performance']['wall_clock_ms']}"
                 )
                 episodes.append(episode)
+                render_progress(
+                    f"{label} {workflow.workflow_id} run {run_num}/{run_count}",
+                    run_num,
+                    run_count,
+                    done=run_num == run_count,
+                )
             summary = aggregate_workflow_runs(workflow, episodes)
             summaries.append(summary)
             print(
@@ -1694,10 +1735,8 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
         base_url=DEFAULT_BASE_URL.format(port=port),
     )
 
-    confirm = input("  ape smash Enter to start [y/n]: ").strip().lower()
-    if confirm not in ("y", ""):
-        print("  ape walk away.")
-        sys.exit(0)
+    if _is_interactive_terminal():
+        print("  benchmark start is automatic. ctrl+c if you want to stop before launch.")
 
     output_files = []
     server_proc  = None
@@ -1709,6 +1748,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
             cache_k = cfg["cache_k"]
             cache_v = cfg["cache_v"]
 
+            render_progress(f"cache run {i + 1}/{len(cache_configs)} ({label})", i, len(cache_configs), done=False)
             print_header(f"Run {i+1}/{len(cache_configs)}: {label}  (cache-k={cache_k} cache-v={cache_v})")
 
             kill_server(server_proc)
@@ -1766,6 +1806,8 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
             except Exception as e:
                 print(f"  ERROR during benchmark [{label}]: {e}")
                 ape_print("error")
+            finally:
+                render_progress(f"cache run {i + 1}/{len(cache_configs)} ({label})", i + 1, len(cache_configs), done=i + 1 == len(cache_configs))
 
             kill_server(server_proc)
             server_proc = None

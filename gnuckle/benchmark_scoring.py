@@ -68,6 +68,7 @@ def aggregate_workflow_runs(workflow: Workflow, episodes: list[dict]) -> dict:
     scored = [score_episode(workflow, episode) for episode in episodes]
     values = [float(item["workflow_score"]) for item in scored]
     derived = _aggregate_derived_metrics(scored)
+    runtime_metrics = _aggregate_runtime_metrics(episodes)
     return {
         "workflow_id": workflow.workflow_id,
         "title": workflow.title,
@@ -81,6 +82,7 @@ def aggregate_workflow_runs(workflow: Workflow, episodes: list[dict]) -> dict:
         "workflow_score_stddev": round(pstdev(values), 3) if len(values) > 1 else 0.0,
         "scores": values,
         "derived_metrics": derived,
+        "runtime_metrics": runtime_metrics,
         "episodes": scored,
         "usability_flags": _workflow_usability_flags(workflow, scored),
     }
@@ -150,6 +152,35 @@ def finalize_benchmark_summary(
             "derived_metrics": derived_metrics,
             "usability_flags": usability_flags,
         },
+    }
+
+
+def _aggregate_runtime_metrics(episodes: list[dict]) -> dict:
+    wall_clock_ms = [
+        float((episode.get("performance") or {}).get("wall_clock_ms", 0) or 0)
+        for episode in episodes
+    ]
+    turn_latency_ms = [
+        float((episode.get("performance") or {}).get("avg_turn_latency_ms", 0) or 0)
+        for episode in episodes
+    ]
+    vram_peak_mb = [
+        int((episode.get("hardware_usage") or {}).get("vram_peak_mb", 0) or 0)
+        for episode in episodes
+    ]
+    vram_steady_mb = [
+        int((episode.get("hardware_usage") or {}).get("vram_steady_mb", 0) or 0)
+        for episode in episodes
+    ]
+    return {
+        "wall_clock_ms_mean": round(mean(wall_clock_ms), 1) if wall_clock_ms else 0.0,
+        "wall_clock_ms_max": round(max(wall_clock_ms), 1) if wall_clock_ms else 0.0,
+        "avg_turn_latency_ms_mean": round(mean(turn_latency_ms), 1) if turn_latency_ms else 0.0,
+        "avg_turn_latency_ms_max": round(max(turn_latency_ms), 1) if turn_latency_ms else 0.0,
+        "vram_peak_mb_mean": round(mean(vram_peak_mb), 1) if vram_peak_mb else 0.0,
+        "vram_peak_mb_max": max(vram_peak_mb) if vram_peak_mb else 0,
+        "vram_steady_mb_mean": round(mean(vram_steady_mb), 1) if vram_steady_mb else 0.0,
+        "vram_steady_mb_max": max(vram_steady_mb) if vram_steady_mb else 0,
     }
 
 

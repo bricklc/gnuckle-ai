@@ -12,12 +12,21 @@ from string import Template
 
 from gnuckle.ape import ape_print
 
+CACHE_LABEL_ALIASES = {
+    "f16": "f16",
+    "q8_0": "q8_0",
+    "q8-0": "q8_0",
+    "q4_0": "q4_0",
+    "q4-0": "q4_0",
+    "turbo3": "turbo3",
+    "turbo4": "turbo4",
+}
 CACHE_COLORS = {
-    "turbo3": "#3B6D11",
-    "turbo4": "#2A8C4A",
-    "q4_0": "#378ADD",
-    "q8_0": "#888780",
-    "f16": "#E24B4A",
+    "turbo3": "#186a3b",
+    "turbo4": "#0f8a5f",
+    "q4_0": "#1c7ed6",
+    "q8_0": "#6c757d",
+    "f16": "#c92a2a",
 }
 CACHE_ORDER = ["f16", "q8_0", "q4_0", "turbo3", "turbo4"]
 COMPRESSION = {
@@ -28,6 +37,35 @@ COMPRESSION = {
     "turbo4": "5.0",
 }
 TURN1_COLOR = "#C0DD97"
+
+
+def canonical_cache_label(label: str) -> str:
+    return CACHE_LABEL_ALIASES.get(str(label or "").strip(), str(label or "unknown"))
+
+
+def cache_color(label: str) -> str:
+    return CACHE_COLORS.get(canonical_cache_label(label), "#888780")
+
+
+def cache_compression(label: str) -> str:
+    return COMPRESSION.get(canonical_cache_label(label), "n/a")
+
+
+def ordered_cache_labels(labels) -> list[str]:
+    seen = []
+    for label in labels:
+        label = str(label)
+        if label not in seen:
+            seen.append(label)
+    return sorted(
+        seen,
+        key=lambda label: (
+            CACHE_ORDER.index(canonical_cache_label(label))
+            if canonical_cache_label(label) in CACHE_ORDER
+            else len(CACHE_ORDER),
+            label,
+        ),
+    )
 
 HTML_TEMPLATE = Template(
     """<!DOCTYPE html>
@@ -683,6 +721,23 @@ def format_pct(value, digits=1):
     return text
 
 
+def format_delta(value, digits=3):
+    if value is None:
+        return "n/a"
+    sign = "+" if value > 0 else ""
+    return f"{sign}{value:.{digits}f}"
+
+
+def delta_class(value):
+    if value is None:
+        return "delta-flat"
+    if value > 0.02:
+        return "delta-up"
+    if value < -0.02:
+        return "delta-down"
+    return "delta-flat"
+
+
 def legend_html(entries):
     return "\n".join(
         f'      <span><span class="dot" style="background:{color}"></span>{escape(label)}</span>'
@@ -831,8 +886,7 @@ def clamp_tick_range(values, lower_pad=2, upper_pad=2):
 
 def build_html(by_cache, model_name, timestamp, system_prompt_summary="system prompt unknown"):
     """Generate the static dashboard HTML from benchmark JSON data."""
-    ordered = [c for c in CACHE_ORDER if c in by_cache]
-    ordered.extend(sorted(c for c in by_cache if c not in ordered))
+    ordered = ordered_cache_labels(by_cache.keys())
     metrics = {cache: extract_metrics(by_cache[cache]) for cache in ordered}
 
     if not ordered:
@@ -887,24 +941,24 @@ def build_html(by_cache, model_name, timestamp, system_prompt_summary="system pr
     )
 
     degrad_legend = legend_html(
-        [(cache, CACHE_COLORS.get(cache, "#999999")) for cache in ordered]
+        [(cache, cache_color(cache)) for cache in ordered]
     )
     vram_legend = degrad_legend
     ttft_legend = degrad_legend
     acc_legend = degrad_legend
 
     degrad_datasets = ",".join(
-        line_dataset(cache, metrics[cache]["tps_all"][:num_turns], CACHE_COLORS.get(cache, "#999999"))
+        line_dataset(cache, metrics[cache]["tps_all"][:num_turns], cache_color(cache))
         for cache in ordered
     )
     ttft_datasets = ",".join(
-        line_dataset(cache, metrics[cache]["ttft_all"][:num_turns], CACHE_COLORS.get(cache, "#999999"))
+        line_dataset(cache, metrics[cache]["ttft_all"][:num_turns], cache_color(cache))
         for cache in ordered
     )
 
     vram_labels = json.dumps(ordered)
     vram_data = json.dumps([metrics[cache]["vram_peak"] for cache in ordered])
-    vram_colors = json.dumps([CACHE_COLORS.get(cache, "#999999") for cache in ordered])
+    vram_colors = json.dumps([cache_color(cache) for cache in ordered])
 
     speed_labels = json.dumps(ordered)
     speed_t1 = json.dumps([metrics[cache]["tps_t1"] for cache in ordered])
@@ -922,7 +976,7 @@ def build_html(by_cache, model_name, timestamp, system_prompt_summary="system pr
         "{"
         f"label:{json.dumps(cache)},"
         f"data:{json.dumps(bucket_acc(metrics[cache]['acc_all'], num_turns))},"
-        f"backgroundColor:{json.dumps(CACHE_COLORS.get(cache, '#999999'))}"
+        f"backgroundColor:{json.dumps(cache_color(cache))}"
         "}"
         for cache in ordered
     )
@@ -935,7 +989,7 @@ def build_html(by_cache, model_name, timestamp, system_prompt_summary="system pr
         table_rows.append(
             f"""        <tr{row_class}>
           <td>{emphasis[0]}{escape(cache)}{emphasis[1]}</td>
-          <td>{emphasis[0]}{format_num(float(COMPRESSION.get(cache, "1.0")), 1)}&times;{emphasis[1]}</td>
+          <td>{emphasis[0]}{(format_num(float(cache_compression(cache)), 1) + '&times;') if cache_compression(cache) != 'n/a' else 'n/a'}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["tps_t1"])}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["tps_tn"])}{emphasis[1]}</td>
           <td class="{deg_class(m['degradation'])}">{emphasis[0]}{format_pct(m["degradation"])}{emphasis[1]}</td>
@@ -1103,7 +1157,7 @@ def _build_agentic_trace_rows(trace):
 
 def build_agentic_html(data):
     if data.get("workflow_results"):
-        return build_agentic_suite_html(data)
+        return build_agentic_suite_html_modern(data)
 
     aggregate = data.get("aggregate", {})
     episode = (data.get("episodes") or [{}])[0]
@@ -1374,11 +1428,19 @@ def _extract_agentic_metrics(data: dict) -> dict:
         summary = data.get("summary", {})
         workflow_results = data.get("workflow_results", [])
         total_workflows = len(workflow_results)
+        vram_peaks = [
+            float((item.get("runtime_metrics") or {}).get("vram_peak_mb_mean", 0) or 0)
+            for item in workflow_results
+        ]
+        vram_steady = [
+            float((item.get("runtime_metrics") or {}).get("vram_steady_mb_mean", 0) or 0)
+            for item in workflow_results
+        ]
         return {
             "wall_clock_s": 0.0,
             "avg_turn_latency_ms": 0.0,
-            "vram_peak_mb": 0,
-            "vram_steady_mb": 0,
+            "vram_peak_mb": int(max(vram_peaks) if vram_peaks else 0),
+            "vram_steady_mb": int(max(vram_steady) if vram_steady else 0),
             "episode_score": round(summary.get("composite_score", 0), 3),
             "task_completed": summary.get("grade") not in {"D", "F"},
             "verification_passed": True,
@@ -1570,8 +1632,7 @@ makeBar('providerChart', $provider_values);
 
 def build_agentic_comparison_html(by_cache: dict[str, dict]) -> str:
     """Build comparison HTML across multiple agentic cache-type runs."""
-    ordered = [c for c in CACHE_ORDER if c in by_cache]
-    ordered.extend(sorted(c for c in by_cache if c not in ordered))
+    ordered = ordered_cache_labels(by_cache.keys())
     metrics = {cache: _extract_agentic_metrics(by_cache[cache]) for cache in ordered}
 
     first = by_cache[ordered[0]]
@@ -1606,7 +1667,7 @@ def build_agentic_comparison_html(by_cache: dict[str, dict]) -> str:
             f"</tr>"
         )
 
-    cache_colors = [CACHE_COLORS.get(c, "#888780") for c in ordered]
+    cache_colors = [cache_color(c) for c in ordered]
     version = _get_version()
 
     return AGENTIC_COMPARISON_TEMPLATE.safe_substitute(
@@ -1625,6 +1686,448 @@ def build_agentic_comparison_html(by_cache: dict[str, dict]) -> str:
         provider_values=json.dumps([metrics[c]["provider_total_tokens"] for c in ordered]),
         version=escape(version),
     )
+
+
+def build_agentic_suite_html_modern(data: dict) -> str:
+    summary = data.get("summary", {})
+    workflow_results = data.get("workflow_results", [])
+    diagnostics = data.get("diagnostics", [])
+    model_name = escape(str(data.get("model_id", "unknown model")))
+    cache_label = escape(str(data.get("cache_label", "unknown")))
+    session_mode = escape(str(data.get("session_mode", "unknown")))
+    workflow_suite = escape(str(data.get("workflow_suite", "benchmark")))
+    generated_at = data.get("generated_at", datetime.now().isoformat())
+    try:
+        timestamp = datetime.fromisoformat(generated_at).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        timestamp = generated_at
+
+    derived = summary.get("derived_metrics", {})
+    diagnostic_rows = "\n".join(
+        f"<tr><td>{escape(item.get('workflow_id', 'unknown'))}</td><td>{format_num(item.get('workflow_score_mean', 0), 3)}</td><td>{escape(str(item.get('run_count', 0)))}</td></tr>"
+        for item in diagnostics
+    ) or "<tr><td colspan='3'>no diagnostics</td></tr>"
+    workflow_rows = []
+    for item in workflow_results:
+        mean = float(item.get("workflow_score_mean", 0) or 0)
+        workflow_rows.append(
+            "<tr>"
+            f"<td><strong>{escape(item.get('workflow_id', 'unknown'))}</strong><div class='minor'>{escape(item.get('benchmark_layer', 'unknown'))} &middot; profile {escape(str(item.get('profile_id') or '-'))}</div></td>"
+            f"<td>{format_num(mean, 3)}</td>"
+            f"<td>{format_num(item.get('workflow_score_stddev', 0), 3)}</td>"
+            f"<td><div class='mini-bar'><span style='width:{max(6, round(mean * 100))}%'></span></div></td>"
+            f"<td>{escape(', '.join(item.get('usability_flags', [])) or 'clean')}</td>"
+            "</tr>"
+        )
+    metric_rows = "\n".join(
+        f"<tr><td>{escape(str(key))}</td><td>{escape(json.dumps(value))}</td></tr>"
+        for key, value in derived.items()
+    ) or "<tr><td colspan='2'>no derived metrics</td></tr>"
+    flags = summary.get("usability_flags", [])
+    flag_badges = "".join(
+        f"<span class='flag'>{escape(flag)}</span>" for flag in flags
+    ) or "<span class='flag flag-ok'>no active usability flags</span>"
+    diagnostics_strip = "".join(
+        f"<div class='diag-pill'><strong>{escape(item.get('workflow_id', 'unknown'))}</strong><span>{format_num(item.get('workflow_score_mean', 0), 3)}</span></div>"
+        for item in diagnostics
+    ) or "<div class='diag-pill'><strong>none</strong><span>n/a</span></div>"
+    version = _get_version()
+
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>agentic benchmark dashboard - {model_name}</title>
+<style>
+:root {{
+  --paper: #fffdf8;
+  --paper-2: #f8f3e8;
+  --ink: #1b1b18;
+  --muted: #6c685d;
+  --line: rgba(34, 33, 28, 0.12);
+  --accent: #174d3a;
+  --shadow: 0 16px 40px rgba(36, 30, 18, 0.08);
+  --radius: 18px;
+}}
+* {{ box-sizing: border-box; }}
+body {{ margin: 0; background:
+  radial-gradient(circle at top left, rgba(204,122,0,0.12), transparent 30%),
+  linear-gradient(180deg, #f6f1e7 0%, #efe7d8 100%);
+  color: var(--ink); font-family: Georgia, "Times New Roman", serif; }}
+.dash {{ max-width: 1440px; margin: 0 auto; padding: 24px; }}
+.hero {{ background: linear-gradient(135deg, rgba(23,77,58,0.96), rgba(52,36,15,0.92)); color: #f7f2e8; border-radius: 28px; padding: 28px; box-shadow: var(--shadow); margin-bottom: 18px; }}
+.eyebrow {{ font: 600 11px/1.2 "Segoe UI", sans-serif; letter-spacing: 0.18em; text-transform: uppercase; opacity: 0.78; margin-bottom: 10px; }}
+.hero h1 {{ margin: 0; font-size: 34px; line-height: 1.05; }}
+.hero .sub {{ margin-top: 10px; color: rgba(247,242,232,0.8); font: 500 13px/1.5 "Segoe UI", sans-serif; }}
+.hero-grid, .metrics-grid, .panel-grid {{ display: grid; gap: 14px; }}
+.hero-grid {{ grid-template-columns: 1.3fr 0.9fr; margin-top: 18px; }}
+.metrics-grid {{ grid-template-columns: repeat(5, minmax(0,1fr)); margin-bottom: 18px; }}
+.panel-grid {{ grid-template-columns: 1.15fr 1fr; }}
+.card, .panel {{ background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }}
+.card {{ padding: 18px; }}
+.panel {{ padding: 20px; }}
+.metric {{ background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.16); border-radius: 18px; padding: 16px; }}
+.metric .val {{ font-size: 28px; font-weight: 700; }}
+.metric .lbl {{ margin-top: 4px; font: 500 11px/1.4 "Segoe UI", sans-serif; text-transform: uppercase; letter-spacing: 0.08em; color: rgba(247,242,232,0.72); }}
+.card .val {{ font-size: 28px; font-weight: 700; }}
+.card .lbl {{ margin-top: 6px; color: var(--muted); font: 600 11px/1.3 "Segoe UI", sans-serif; text-transform: uppercase; letter-spacing: 0.08em; }}
+.card .sub {{ margin-top: 6px; color: var(--muted); font: 500 12px/1.5 "Segoe UI", sans-serif; }}
+.section-title {{ margin: 0 0 10px; font-size: 18px; }}
+.section-sub {{ margin: 0 0 14px; color: var(--muted); font: 500 12px/1.5 "Segoe UI", sans-serif; }}
+.flag-row, .diag-strip {{ display: flex; flex-wrap: wrap; gap: 8px; }}
+.flag {{ display: inline-flex; align-items: center; border-radius: 999px; padding: 6px 10px; background: #f8dfc8; color: #7b3f00; font: 600 11px/1 "Segoe UI", sans-serif; }}
+.flag-ok {{ background: #dff3e4; color: #1b7f3b; }}
+.diag-pill {{ display: inline-flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--paper-2); border: 1px solid var(--line); border-radius: 14px; font: 600 12px/1.2 "Segoe UI", sans-serif; }}
+.diag-pill span {{ color: var(--accent); }}
+table {{ width: 100%; border-collapse: collapse; }}
+th, td {{ padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; text-align: left; }}
+th {{ color: var(--muted); font: 700 11px/1.2 "Segoe UI", sans-serif; letter-spacing: 0.08em; text-transform: uppercase; }}
+td {{ font: 500 13px/1.45 "Segoe UI", sans-serif; }}
+tr:last-child td {{ border-bottom: none; }}
+.minor {{ margin-top: 3px; color: var(--muted); font-size: 11px; }}
+.mini-bar {{ width: 100%; height: 10px; background: #ece4d5; border-radius: 999px; overflow: hidden; }}
+.mini-bar span {{ display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #c98b2b, #174d3a); }}
+.footer {{ margin-top: 16px; color: var(--muted); font: 500 11px/1.4 "Segoe UI", sans-serif; }}
+@media (max-width: 1100px) {{
+  .metrics-grid {{ grid-template-columns: repeat(2, minmax(0,1fr)); }}
+  .hero-grid, .panel-grid {{ grid-template-columns: 1fr; }}
+}}
+@media (max-width: 680px) {{
+  .dash {{ padding: 14px; }}
+  .metrics-grid {{ grid-template-columns: 1fr; }}
+}}
+</style></head><body>
+<div class="dash">
+  <section class="hero">
+    <div class="eyebrow">Agentic benchmark suite</div>
+    <h1>{workflow_suite} on {cache_label}</h1>
+    <div class="sub">{model_name} &middot; {escape(timestamp)} &middot; session {session_mode}</div>
+    <div class="hero-grid">
+      <div class="metric">
+        <div class="val">{escape(str(summary.get('type', 'unknown')))} / {escape(str(summary.get('grade', 'unknown')))}</div>
+        <div class="lbl">Type and grade</div>
+      </div>
+      <div class="metric">
+        <div class="val">{format_num(summary.get('composite_score', 0), 3)}</div>
+        <div class="lbl">Composite score</div>
+      </div>
+    </div>
+  </section>
+  <section class="metrics-grid">
+    <div class="card"><div class="val">{format_num(summary.get('core_score', 0), 3)}</div><div class="lbl">Core score</div><div class="sub">Core battery average after diagnostics routing.</div></div>
+    <div class="card"><div class="val">{format_num(summary.get('profile_score', 0), 3) if summary.get('profile_score') is not None else 'n/a'}</div><div class="lbl">Profile score</div><div class="sub">Life-mgmt profile score when profile workflows are active.</div></div>
+    <div class="card"><div class="val">{len(workflow_results)}</div><div class="lbl">Workflows scored</div><div class="sub">Diagnostics are reported separately to keep routing visible.</div></div>
+    <div class="card"><div class="val">{len(diagnostics)}</div><div class="lbl">Diagnostics</div><div class="sub">The three gate checks that decide the type ceiling.</div></div>
+    <div class="card"><div class="val">{len(flags)}</div><div class="lbl">Usability flags</div><div class="sub">Operational warnings carried into the suite summary.</div></div>
+  </section>
+  <section class="panel-grid">
+    <div class="panel">
+      <h2 class="section-title">Usability flags</h2>
+      <p class="section-sub">Flags stay exposed so the grade cannot hide operational problems.</p>
+      <div class="flag-row">{flag_badges}</div>
+    </div>
+    <div class="panel">
+      <h2 class="section-title">Diagnostic readout</h2>
+      <p class="section-sub">Routing inputs shown as compact score pills.</p>
+      <div class="diag-strip">{diagnostics_strip}</div>
+    </div>
+  </section>
+  <section class="panel" style="margin-top:18px;">
+    <h2 class="section-title">Diagnostics</h2>
+    <p class="section-sub">Mean diagnostic score and run count for each gate check.</p>
+    <table><tr><th>Workflow</th><th>Mean score</th><th>Runs</th></tr>{diagnostic_rows}</table>
+  </section>
+  <section class="panel" style="margin-top:18px;">
+    <h2 class="section-title">Workflow results</h2>
+    <p class="section-sub">Each workflow keeps its own mean, spread, and active flags. The bar is only a legibility aid.</p>
+    <table><tr><th>Workflow</th><th>Mean</th><th>Stddev</th><th>Visual</th><th>Flags</th></tr>{''.join(workflow_rows) or "<tr><td colspan='5'>no workflow results</td></tr>"}</table>
+  </section>
+  <section class="panel" style="margin-top:18px;">
+    <h2 class="section-title">Derived metrics</h2>
+    <p class="section-sub">Suite-level metrics remain raw so weak spots are not smoothed over.</p>
+    <table><tr><th>Metric</th><th>Value</th></tr>{metric_rows}</table>
+  </section>
+  <div class="footer">generated by gnuckle {escape(version)}</div>
+</div>
+</body></html>"""
+
+
+def build_agentic_comparison_html_modern(by_cache: dict[str, dict]) -> str:
+    ordered = ordered_cache_labels(by_cache.keys())
+    first = by_cache[ordered[0]]
+    model_name = escape(str(first.get("model_id", "unknown model")))
+    workflow_suite = escape(str(first.get("workflow_suite", "benchmark")))
+    generated_at = first.get("generated_at", datetime.now().isoformat())
+    try:
+        timestamp = datetime.fromisoformat(generated_at).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        timestamp = generated_at
+
+    baseline = "f16" if "f16" in ordered else ordered[0]
+    suite_summaries = {cache: by_cache[cache].get("summary", {}) for cache in ordered}
+    baseline_summary = suite_summaries[baseline]
+
+    workflow_ids = []
+    for cache in ordered:
+        for item in by_cache[cache].get("diagnostics", []):
+            workflow_id = item.get("workflow_id", "unknown")
+            if workflow_id not in workflow_ids:
+                workflow_ids.append(workflow_id)
+        for item in by_cache[cache].get("workflow_results", []):
+            workflow_id = item.get("workflow_id", "unknown")
+            if workflow_id not in workflow_ids:
+                workflow_ids.append(workflow_id)
+
+    workflow_maps = {
+        cache: {
+            item.get("workflow_id", "unknown"): item
+            for item in (by_cache[cache].get("diagnostics", []) + by_cache[cache].get("workflow_results", []))
+        }
+        for cache in ordered
+    }
+
+    def workflow_score(cache: str, workflow_id: str):
+        item = workflow_maps.get(cache, {}).get(workflow_id, {})
+        value = item.get("workflow_score_mean")
+        return None if value is None else float(value or 0)
+
+    def workflow_vram(cache: str, workflow_id: str):
+        item = workflow_maps.get(cache, {}).get(workflow_id, {})
+        runtime = item.get("runtime_metrics") or {}
+        value = runtime.get("vram_peak_mb_mean")
+        return None if value is None else float(value or 0)
+
+    def suite_vram_peak(cache: str):
+        peaks = [
+            float((item.get("runtime_metrics") or {}).get("vram_peak_mb_max", 0) or 0)
+            for item in by_cache[cache].get("workflow_results", [])
+        ]
+        return max(peaks) if peaks else 0.0
+
+    baseline_vram_peak = suite_vram_peak(baseline)
+    leaderboard_rows = []
+    for cache in ordered:
+        summary = suite_summaries[cache]
+        composite_delta = float(summary.get("composite_score", 0) or 0) - float(baseline_summary.get("composite_score", 0) or 0)
+        vram_peak = suite_vram_peak(cache)
+        vram_delta = vram_peak - baseline_vram_peak if baseline_vram_peak or vram_peak else None
+        flag_text = ", ".join(summary.get("usability_flags", [])) or "clean"
+        leaderboard_rows.append(
+            "<tr>"
+            f"<td><span class='cache-pill' style='--cache:{cache_color(cache)}'>{escape(cache)}</span></td>"
+            f"<td>{escape(str(summary.get('type', 'unknown')))}</td>"
+            f"<td>{escape(str(summary.get('grade', 'unknown')))}</td>"
+            f"<td>{format_num(summary.get('composite_score', 0), 3)}</td>"
+            f"<td class='{delta_class(composite_delta)}'>{format_delta(composite_delta)}</td>"
+            f"<td>{format_num(summary.get('core_score', 0), 3)}</td>"
+            f"<td>{format_num(summary.get('profile_score', 0), 3) if summary.get('profile_score') is not None else 'n/a'}</td>"
+            f"<td>{format_num(vram_peak, 0) if vram_peak else 'n/a'}<div class='delta {delta_class(-vram_delta if vram_delta is not None else None)}'>{format_delta(vram_delta, 0) if vram_delta is not None else 'n/a'}</div></td>"
+            f"<td>{escape(flag_text)}</td>"
+            "</tr>"
+        )
+
+    workflow_rows = []
+    max_spread = 0.0
+    widest_workflow = "n/a"
+    for workflow_id in workflow_ids:
+        scores = [workflow_score(cache, workflow_id) for cache in ordered if workflow_score(cache, workflow_id) is not None]
+        spread = (max(scores) - min(scores)) if scores else 0.0
+        if spread > max_spread:
+            max_spread = spread
+            widest_workflow = workflow_id
+        row_cells = [f"<td><strong>{escape(workflow_id)}</strong></td>"]
+        baseline_score_for_workflow = workflow_score(baseline, workflow_id)
+        for cache in ordered:
+            score = workflow_score(cache, workflow_id)
+            delta = None if baseline_score_for_workflow is None or score is None else score - baseline_score_for_workflow
+            score_text = "n/a" if score is None else format_num(score, 3)
+            cell_class = delta_class(delta)
+            delta_text = "" if cache == baseline else f"<div class='delta {cell_class}'>{format_delta(delta)}</div>"
+            row_cells.append(f"<td class='{cell_class}'>{score_text}{delta_text}</td>")
+        row_cells.append(f"<td>{format_num(spread, 3)}</td>")
+        workflow_rows.append("<tr>" + "".join(row_cells) + "</tr>")
+
+    vram_missing = all(
+        workflow_vram(cache, workflow_id) in (None, 0.0)
+        for cache in ordered
+        for workflow_id in workflow_ids
+    )
+    vram_datasets = [
+        {
+            "label": cache,
+            "data": [workflow_vram(cache, workflow_id) for workflow_id in workflow_ids],
+            "borderColor": cache_color(cache),
+            "backgroundColor": "transparent",
+            "borderWidth": 3 if cache == baseline else 2,
+            "pointRadius": 2,
+            "spanGaps": True,
+            "tension": 0.25,
+        }
+        for cache in ordered
+    ]
+
+    best_cache = max(ordered, key=lambda cache: float(suite_summaries[cache].get("composite_score", 0) or 0))
+    best_score = float(suite_summaries[best_cache].get("composite_score", 0) or 0)
+    baseline_score = float(baseline_summary.get("composite_score", 0) or 0)
+    turbo3_delta = None
+    if "turbo3" in suite_summaries:
+        turbo3_delta = float(suite_summaries["turbo3"].get("composite_score", 0) or 0) - baseline_score
+    grade_line = " | ".join(f"{cache}:{suite_summaries[cache].get('grade', 'n/a')}" for cache in ordered)
+    version = _get_version()
+
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>agentic benchmark dashboard - {model_name}</title>
+<style>
+:root {{
+  --bg: #f3ece0;
+  --paper: #fffdf8;
+  --paper-2: #f6f0e3;
+  --ink: #191814;
+  --muted: #6b675c;
+  --line: rgba(30, 26, 18, 0.12);
+  --gold: #bb7a1c;
+  --forest: #174d3a;
+  --shadow: 0 18px 45px rgba(44, 34, 18, 0.08);
+  --radius: 20px;
+}}
+* {{ box-sizing: border-box; }}
+body {{ margin: 0; color: var(--ink); background:
+  radial-gradient(circle at top right, rgba(23,77,58,0.1), transparent 26%),
+  radial-gradient(circle at left center, rgba(187,122,28,0.13), transparent 30%),
+  linear-gradient(180deg, #f6f1e8 0%, #efe5d3 100%);
+  font-family: Georgia, "Times New Roman", serif; }}
+.dash {{ max-width: 1520px; margin: 0 auto; padding: 24px; }}
+.hero {{ background: linear-gradient(140deg, rgba(18,64,49,0.98), rgba(56,38,14,0.94)); color: #f6f1e7; border-radius: 30px; padding: 28px; box-shadow: var(--shadow); margin-bottom: 18px; }}
+.eyebrow {{ font: 600 11px/1.2 "Segoe UI", sans-serif; letter-spacing: 0.18em; text-transform: uppercase; opacity: 0.78; margin-bottom: 10px; }}
+.hero h1 {{ margin: 0; font-size: 40px; line-height: 1.02; }}
+.hero .sub {{ margin-top: 10px; color: rgba(246,241,231,0.78); font: 500 13px/1.6 "Segoe UI", sans-serif; }}
+.hero-grid, .stats-grid, .panel-grid {{ display: grid; gap: 14px; }}
+.hero-grid {{ grid-template-columns: 1.3fr 0.9fr; margin-top: 20px; }}
+.stats-grid {{ grid-template-columns: repeat(4, minmax(0,1fr)); margin-bottom: 18px; }}
+.panel-grid {{ grid-template-columns: 1fr 1fr; }}
+.hero-card, .card, .panel {{ border-radius: var(--radius); box-shadow: var(--shadow); }}
+.hero-card {{ background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.14); padding: 16px; }}
+.hero-card .val {{ font-size: 30px; font-weight: 700; }}
+.hero-card .lbl {{ margin-top: 4px; color: rgba(246,241,231,0.72); font: 600 11px/1.4 "Segoe UI", sans-serif; letter-spacing: 0.08em; text-transform: uppercase; }}
+.card, .panel {{ background: var(--paper); border: 1px solid var(--line); }}
+.card {{ padding: 18px; }}
+.panel {{ padding: 20px; }}
+.card .val {{ font-size: 28px; font-weight: 700; }}
+.card .lbl {{ margin-top: 6px; color: var(--muted); font: 600 11px/1.3 "Segoe UI", sans-serif; letter-spacing: 0.08em; text-transform: uppercase; }}
+.card .sub {{ margin-top: 6px; color: var(--muted); font: 500 12px/1.5 "Segoe UI", sans-serif; }}
+.section-title {{ margin: 0 0 10px; font-size: 18px; }}
+.section-sub {{ margin: 0 0 14px; color: var(--muted); font: 500 12px/1.5 "Segoe UI", sans-serif; }}
+.callout {{ padding: 14px 16px; border-radius: 16px; background: var(--paper-2); border: 1px solid var(--line); font: 500 13px/1.6 "Segoe UI", sans-serif; color: var(--muted); }}
+.callout strong {{ color: var(--ink); }}
+.cache-pill {{ display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 999px; background: color-mix(in srgb, var(--cache) 12%, white); color: var(--ink); font: 700 11px/1 "Segoe UI", sans-serif; text-transform: uppercase; letter-spacing: 0.06em; }}
+.cache-pill::before {{ content: ""; width: 9px; height: 9px; border-radius: 999px; background: var(--cache); }}
+.delta {{ margin-top: 4px; font: 700 11px/1 "Segoe UI", sans-serif; }}
+.delta-up {{ color: #1b7f3b; }}
+.delta-down {{ color: #b42318; }}
+.delta-flat {{ color: var(--muted); }}
+.chart-panel {{ margin-top: 18px; }}
+.chart-shell {{ position: relative; width: 100%; height: 360px; }}
+.data-warning {{ margin-top: 10px; color: #7b3f00; font: 600 12px/1.5 "Segoe UI", sans-serif; }}
+table {{ width: 100%; border-collapse: collapse; }}
+th, td {{ padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }}
+th {{ color: var(--muted); font: 700 11px/1.2 "Segoe UI", sans-serif; letter-spacing: 0.08em; text-transform: uppercase; }}
+td {{ font: 500 13px/1.45 "Segoe UI", sans-serif; }}
+tr:last-child td {{ border-bottom: none; }}
+.matrix-wrap {{ overflow-x: auto; }}
+.delta-up td, td.delta-up {{ background: rgba(27,127,59,0.06); }}
+.delta-down td, td.delta-down {{ background: rgba(180,35,24,0.06); }}
+.footer {{ margin-top: 16px; color: var(--muted); font: 500 11px/1.4 "Segoe UI", sans-serif; }}
+@media (max-width: 1100px) {{
+  .hero-grid, .panel-grid {{ grid-template-columns: 1fr; }}
+  .stats-grid {{ grid-template-columns: repeat(2, minmax(0,1fr)); }}
+}}
+@media (max-width: 700px) {{
+  .dash {{ padding: 14px; }}
+  .stats-grid {{ grid-template-columns: 1fr; }}
+}}
+</style></head><body>
+<div class="dash">
+  <section class="hero">
+    <div class="eyebrow">Agentic benchmark comparison</div>
+    <h1>{workflow_suite}: f16 through turbo3</h1>
+    <div class="sub">{model_name} &middot; {escape(timestamp)} &middot; baseline {escape(baseline)} &middot; {len(ordered)} cache variants</div>
+    <div class="hero-grid">
+      <div class="hero-card"><div class="val">{escape(best_cache)} at {format_num(best_score, 3)}</div><div class="lbl">Best composite score</div></div>
+      <div class="hero-card"><div class="val">{format_delta(turbo3_delta) if turbo3_delta is not None else 'n/a'}</div><div class="lbl">Turbo3 delta vs {escape(baseline)}</div></div>
+    </div>
+  </section>
+  <section class="stats-grid">
+    <div class="card"><div class="val">{format_num(best_score - baseline_score, 3)}</div><div class="lbl">Gain over baseline</div><div class="sub">Best cache composite minus {escape(baseline)} composite.</div></div>
+    <div class="card"><div class="val">{format_num(max(float(suite_summaries[c].get('composite_score', 0) or 0) for c in ordered) - min(float(suite_summaries[c].get('composite_score', 0) or 0) for c in ordered), 3)}</div><div class="lbl">Score spread</div><div class="sub">Wider spread means cache choice materially changes the benchmark result.</div></div>
+    <div class="card"><div class="val">{escape(widest_workflow)}</div><div class="lbl">Widest workflow spread</div><div class="sub">Largest per-workflow variation across cache quants.</div></div>
+    <div class="card"><div class="val">{grade_line}</div><div class="lbl">Grade ladder</div><div class="sub">Full grade snapshot, left to right in cache order.</div></div>
+  </section>
+  <section class="panel-grid">
+    <div class="panel">
+      <h2 class="section-title">Cache leaderboard</h2>
+      <p class="section-sub">Overall suite scores and direct delta against the {escape(baseline)} baseline.</p>
+      <table>
+        <tr><th>Cache</th><th>Type</th><th>Grade</th><th>Composite</th><th>Delta vs {escape(baseline)}</th><th>Core</th><th>Profile</th><th>VRAM peak</th><th>Flags</th></tr>
+        {''.join(leaderboard_rows)}
+      </table>
+    </div>
+    <div class="panel">
+      <h2 class="section-title">How to read this page</h2>
+      <p class="section-sub">The benchmark result is no longer trapped in one cache at a time.</p>
+      <div class="callout">
+        <strong>Rows compare the suite output directly.</strong> The leaderboard shows whether a cache change improves or hurts the benchmark.
+        <br><strong>The matrix below is the real audit surface.</strong> Each workflow cell shows the score for that cache, with a delta against <strong>{escape(baseline)}</strong>.
+        <br><strong>Spread matters.</strong> If one workflow swings hard while the overall score looks similar, that is where the quant tradeoff is hiding.
+      </div>
+    </div>
+  </section>
+  <section class="panel chart-panel">
+    <h2 class="section-title">VRAM load through all passes</h2>
+    <p class="section-sub">Mean peak VRAM for each cache, drawn across benchmark pass order from diagnostics into the main workflow suite.</p>
+    <div class="chart-shell"><canvas id="vramPassChart"></canvas></div>
+    {"<div class='data-warning'>This saved run does not contain per-pass suite VRAM metrics. Re-run the benchmark with the updated scorer to populate this graph.</div>" if vram_missing else ""}
+  </section>
+  <section class="panel" style="margin-top:18px;">
+    <h2 class="section-title">Workflow delta matrix</h2>
+    <p class="section-sub">Every workflow score by cache, with per-cell difference against the {escape(baseline)} baseline.</p>
+    <div class="matrix-wrap">
+      <table>
+        <tr><th>Workflow</th>{''.join(f'<th>{escape(cache)}</th>' for cache in ordered)}<th>Spread</th></tr>
+        {''.join(workflow_rows) or "<tr><td colspan='99'>no workflow rows</td></tr>"}
+      </table>
+    </div>
+  </section>
+  <div class="footer">generated by gnuckle {escape(version)}</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const gridColor = 'rgba(107,103,92,0.16)';
+const tickColor = '#6b675c';
+const tickFont = {{ size: 10 }};
+new Chart(document.getElementById('vramPassChart'), {{
+  type: 'line',
+  data: {{
+    labels: {json.dumps(workflow_ids)},
+    datasets: {json.dumps(vram_datasets)}
+  }},
+  options: {{
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {{ legend: {{ display: true }} }},
+    scales: {{
+      x: {{
+        ticks: {{ color: tickColor, font: tickFont, maxRotation: 45, minRotation: 45 }},
+        grid: {{ color: gridColor }}
+      }},
+      y: {{
+        ticks: {{ color: tickColor, font: tickFont }},
+        grid: {{ color: gridColor }},
+        title: {{ display: true, text: 'VRAM peak (MB)', color: tickColor, font: {{ size: 11 }} }}
+      }}
+    }}
+  }}
+}});
+</script>
+</body></html>"""
 
 
 def _get_version():
@@ -1668,17 +2171,21 @@ def run_visualize(results_dir: str):
         print(f"  model: {first_data.get('model_id', 'unknown model')}")
         ape_print("loading")
 
-        # Always produce the single-run dashboard for the most recent run
-        html = build_agentic_html(first_data)
-        out_file = results_path / "agentic_benchmark_dashboard.html"
-
-        # If multiple cache types exist, also produce the comparison view
         if len(agentic_by_cache) > 1:
-            comparison_html = build_agentic_comparison_html(agentic_by_cache)
+            html = build_agentic_comparison_html_modern(agentic_by_cache)
+            out_file = results_path / "agentic_benchmark_dashboard.html"
+            detail_html = build_agentic_html(first_data)
+            detail_file = results_path / "agentic_single_cache_dashboard.html"
+            detail_file.write_text(detail_html, encoding="utf-8")
+            comparison_html = build_agentic_comparison_html_modern(agentic_by_cache)
             comparison_file = results_path / "agentic_comparison_dashboard.html"
             comparison_file.write_text(comparison_html, encoding="utf-8")
             print(f"\n  comparison saved: {comparison_file}")
+            print(f"  single-cache detail saved: {detail_file}")
             print(f"  {len(agentic_by_cache)} cache types compared. ape see the difference now. yes.")
+        else:
+            html = build_agentic_html(first_data)
+            out_file = results_path / "agentic_benchmark_dashboard.html"
     else:
         by_cache = load_results(results_path)
 
