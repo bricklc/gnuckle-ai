@@ -1944,12 +1944,13 @@ def _print_run_banner(benchmark_mode, model_path, server_path, output_path, pres
     print()
 
 
-def _print_profile_card(preset):
+def _print_profile_card(preset, split_config=None):
     """Display the sampler profile card for user review before benchmark."""
     sa = preset.get("server_args", {})
     ra = preset.get("request_args", {})
     sources = preset.get("source", [])
     notes = preset.get("notes", "")
+    sc = split_config or {}
 
     print("  ┌─────────────────────────────────────────────────┐")
     print(f"  │  Profile Card: {preset.get('name', 'default'):<33}│")
@@ -1966,6 +1967,10 @@ def _print_profile_card(preset):
     print(f"  │  request_args                                  │")
     print(f"  │    temperature    : {str(ra.get('temperature', '—')):<27}│")
     print(f"  │    top_p          : {str(ra.get('top_p', '—')):<27}│")
+    print("  ├─────────────────────────────────────────────────┤")
+    print(f"  │  gpu                                           │")
+    print(f"  │    main_gpu       : {str(sc.get('main_gpu', 0)):<27}│")
+    print(f"  │    split_mode     : {str(sc.get('split_mode', 'layer')):<27}│")
     print("  ├─────────────────────────────────────────────────┤")
     for src in sources[:3]:
         truncated = (src[:45] + "...") if len(src) > 48 else src
@@ -1987,20 +1992,20 @@ def _print_profile_card(preset):
     print()
 
 
-def _prompt_profile_confirmation(preset):
-    """Show profile card and prompt user to proceed or edit sampler values.
+def _prompt_profile_confirmation(preset, split_config):
+    """Show profile card and prompt user to proceed or edit values.
 
-    Returns the (possibly modified) preset.
+    Returns the (possibly modified) preset and split_config.
     """
-    _print_profile_card(preset)
+    _print_profile_card(preset, split_config)
 
     if not _is_interactive_terminal():
-        return preset
+        return preset, split_config
 
     while True:
         answer = input("  Proceed without making any changes? (y/n): ").strip().lower()
         if answer in ("y", "yes", ""):
-            return preset
+            return preset, split_config
         if answer in ("n", "no"):
             break
         print("  Please enter y or n.")
@@ -2027,13 +2032,22 @@ def _prompt_profile_confirmation(preset):
             except ValueError:
                 print(f"    invalid value, keeping {current}")
 
+    # GPU settings
+    current_gpu = split_config.get("main_gpu", 0)
+    raw = input(f"    {'main_gpu':<18} [{current_gpu}]: ").strip()
+    if raw:
+        try:
+            split_config["main_gpu"] = int(raw)
+        except ValueError:
+            print(f"    invalid value, keeping {current_gpu}")
+
     # Sync request_args with server_args
     ra["temperature"] = sa.get("temp", ra.get("temperature"))
     ra["top_p"] = sa.get("top_p", ra.get("top_p"))
 
     print()
-    _print_profile_card(preset)
-    return preset
+    _print_profile_card(preset, split_config)
+    return preset, split_config
 
 
 # ── FULL BENCHMARK ORCHESTRATOR ──────────────────────────────────────────────
@@ -2130,7 +2144,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
     )
 
     if _is_interactive_terminal():
-        preset = _prompt_profile_confirmation(preset)
+        preset, split_config = _prompt_profile_confirmation(preset, split_config)
 
     output_files = []
     server_proc  = None
