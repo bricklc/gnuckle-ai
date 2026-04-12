@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 from urllib.request import Request, urlopen
 
 from gnuckle import __version__
 from gnuckle.bench_pack.trust import append_audit_log, ensure_home_layout, registry_dir
 
-DEFAULT_REGISTRY_INDEX_URL = "https://raw.githubusercontent.com/gnuckle-ai/benchmark-index/main/index.json"
+def bundled_registry_index_url() -> str:
+    bundled = Path(__file__).resolve().parents[2] / "benchmark-index" / "index.json"
+    return bundled.as_uri()
+
+
+DEFAULT_REGISTRY_INDEX_URL = bundled_registry_index_url()
 
 
 def index_path() -> Path:
@@ -44,6 +51,22 @@ def sync_registry(index_url: str | None = None) -> list[dict]:
         payload = response.read().decode("utf-8")
     data = json.loads(payload)
     entries = data if isinstance(data, list) else list(data.get("benchmarks", []))
+    parsed = urlparse(url)
+    if parsed.scheme == "file":
+        local_path = url2pathname(parsed.path)
+        if parsed.netloc:
+            local_path = f"//{parsed.netloc}{local_path}"
+        index_file = Path(local_path)
+        base_dir = index_file.parent
+        normalized = []
+        for entry in entries:
+            item = dict(entry)
+            if "manifest_url" not in item:
+                manifest_path = item.get("path") or item.get("manifest_path")
+                if manifest_path:
+                    item["manifest_url"] = (base_dir / manifest_path).resolve().as_uri()
+            normalized.append(item)
+        entries = normalized
     save_local_index(entries)
     append_audit_log("registry_update", details={"count": len(entries), "index_url": url})
     return entries

@@ -1,0 +1,47 @@
+schema: 1
+id: wikitext2_ppl
+version: 1.0.0
+gnuckle_min: 0.6.0
+gnuckle_max: null
+author:
+  name: gnuckle-core
+  contact: https://github.com/bricklc/gnuckle-ai
+description: >
+  WikiText-2 perplexity benchmark using llama-perplexity as the first
+  declarative canary benchmark pack.
+license: MIT
+kind: quality
+tags: [quality, standard, wikitext2]
+binary: llama-perplexity
+dataset:
+  id: wikitext-2-raw-v1
+  url: https://huggingface.co/datasets/ggml-org/ci/resolve/main/wikitext-2-raw-v1.zip
+  sha256: ef7edb566e3e2b2d31b29c1fdb0c89a4cc683597484c3dc2517919c615435a11
+  size_bytes_max: 5242880
+  archive: zip
+  extract: wikitext-2-raw/wiki.test.raw
+stages:
+  - id: run
+    args_template:
+      - -m
+      - "{model_path}"
+      - -f
+      - "{dataset_path}"
+      - --ctx-size
+      - "512"
+      - -ngl
+      - "99"
+      - --cache-type-k
+      - "{cache_k}"
+      - --cache-type-v
+      - "{cache_v}"
+parse:
+  perplexity:
+    pattern: \bPPL\s*=\s*([0-9]+(?:\.[0-9]+)?)
+    unit: perplexity
+report:
+  column_label: WikiText-2 PPL
+  primary_metric: perplexity
+  delta_vs_baseline: relative
+  sort: ascending
+timeout_seconds: 1800

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 MAX_CAPTURE_BYTES = 1_000_000
-NESTED_QUANTIFIER_RE = re.compile(r"\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)[+*?]")
+NESTED_QUANTIFIER_RE = re.compile(r"\((?!\?:|\?=|\?!|\?<=|\?<!)(?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)[+*?]")
 
 
 class ParserValidationError(ValueError):

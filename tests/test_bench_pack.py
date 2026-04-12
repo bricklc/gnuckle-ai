@@ -28,6 +28,7 @@ from gnuckle.bench_pack.trust import (
     lock_path,
     sanitized_subprocess_env,
 )
+from gnuckle.visualize import extract_metrics
 
 
 def base_manifest_dict() -> dict:
@@ -241,3 +242,161 @@ class BenchPackTests(unittest.TestCase):
         path.write_text('{"schema":1,"schema":1}', encoding="utf-8")
         with self.assertRaises(ValueError):
             load_manifest_file(path)
+
+    def test_bundled_registry_has_exactly_one_wikitext2_canary_manifest(self) -> None:
+        index_path = Path("benchmark-index") / "index.json"
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        entries = payload["benchmarks"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["id"], "wikitext2_ppl")
+        manifest_path = Path("benchmark-index") / entries[0]["path"]
+        manifest, _, _ = load_manifest_file(manifest_path)
+        self.assertEqual(manifest.id, "wikitext2_ppl")
+        self.assertEqual(manifest.binary, "llama-perplexity")
+
+    def test_install_wikitext2_from_registry_entry_succeeds_on_clean_home(self) -> None:
+        dataset_bytes = io.BytesIO()
+        with zipfile.ZipFile(dataset_bytes, "w") as zf:
+            zf.writestr("wikitext-2-raw/wiki.test.raw", "demo")
+        archive_bytes = dataset_bytes.getvalue()
+        dataset_sha = __import__("hashlib").sha256(archive_bytes).hexdigest()
+
+        registry_root = Path(self.tmpdir.name) / "registry_src"
+        manifest_dir = registry_root / "benchmarks" / "core" / "wikitext2_ppl"
+        manifest_dir.mkdir(parents=True, exist_ok=True)
+        manifest = base_manifest_dict()
+        manifest["id"] = "wikitext2_ppl"
+        manifest["version"] = "1.0.0"
+        manifest["gnuckle_min"] = "0.6.0"
+        manifest["dataset"] = {
+            "id": "wikitext-2-raw-v1",
+            "url": "https://huggingface.co/datasets/ggml-org/ci/resolve/main/wikitext-2-raw-v1.zip",
+            "sha256": dataset_sha,
+            "size_bytes_max": 4096,
+            "archive": "zip",
+            "extract": "wikitext-2-raw/wiki.test.raw",
+        }
+        manifest["parse"] = {"perplexity": {"pattern": r"\bPPL\s*=\s*([0-9]+\.[0-9]+)"}}
+        manifest_path = manifest_dir / "manifest.yaml"
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        index_path = registry_root / "index.json"
+        index_path.write_text(
+            json.dumps({"benchmarks": [{"id": "wikitext2_ppl", "path": "benchmarks/core/wikitext2_ppl/manifest.yaml"}]}, indent=2),
+            encoding="utf-8",
+        )
+
+        from gnuckle.bench_pack.installer import _download_bytes as real_download
+
+        def fake_download(url: str, *, size_limit: int) -> bytes:
+            if url.startswith("https://huggingface.co/"):
+                return archive_bytes
+            return real_download(url, size_limit=size_limit)
+
+        sync_registry(index_path.resolve().as_uri())
+        with patch("gnuckle.bench_pack.installer._download_bytes", side_effect=fake_download):
+            result = install_pack("wikitext2_ppl", assume_yes=True)
+        self.assertTrue(result["installed"])
+        self.assertTrue((benchmarks_dir() / "wikitext2_ppl" / "manifest.yaml").exists())
+        self.assertTrue((datasets_dir() / "wikitext-2-raw-v1" / "wikitext-2-raw" / "wiki.test.raw").exists())
+
+    def test_pack_runtime_wikitext2_output_feeds_visualizer_metrics(self) -> None:
+        manifest = base_manifest_dict()
+        manifest["id"] = "wikitext2_ppl"
+        manifest["version"] = "1.0.0"
+        manifest["gnuckle_min"] = "0.6.0"
+        manifest["dataset"] = None
+        manifest["parse"] = {"perplexity": {"pattern": r"\bPPL\s*=\s*([0-9]+\.[0-9]+)"}}
+        manifest_path = self._write_manifest(manifest, "wikitext2_manifest.yaml")
+        install_pack(str(manifest_path), assume_yes=True)
+
+        from gnuckle.bench_pack.runner import run_quality_packs
+
+        fake_completed = SimpleNamespace(returncode=0, stdout="final PPL = 6.4321", stderr="")
+        model_path = Path(self.tmpdir.name) / "model.gguf"
+        model_path.write_text("gguf", encoding="utf-8")
+
+        with patch("gnuckle.bench_pack.runner._resolve_binary", return_value=Path("llama-perplexity")), patch(
+            "gnuckle.bench_pack.runner.subprocess.run", return_value=fake_completed
+        ):
+            results = run_quality_packs(
+                ["wikitext2_ppl"],
+                server_path=None,
+                model_path=model_path,
+                cache_label="f16",
+                cache_k="f16",
+                cache_v="f16",
+            )
+        metrics = extract_metrics({"meta": {"quality_benchmarks": results}, "turns": [{"tps": 1.0}], "aggregate": {}})
+        self.assertEqual(results["wikitext2_ppl"]["perplexity"], 6.4321)
+        self.assertEqual(metrics["wikitext2_perplexity"], 6.4321)
+
+    def test_run_full_benchmark_passes_pack_quality_results_into_legacy_output(self) -> None:
+        from gnuckle.benchmark import run_full_benchmark
+
+        manifest = base_manifest_dict()
+        manifest["id"] = "wikitext2_ppl"
+        manifest["version"] = "1.0.0"
+        manifest["gnuckle_min"] = "0.6.0"
+        manifest["dataset"] = None
+        manifest["parse"] = {"perplexity": {"pattern": r"\bPPL\s*=\s*([0-9]+\.[0-9]+)"}}
+        manifest_path = self._write_manifest(manifest, "run_manifest.yaml")
+        install_pack(str(manifest_path), assume_yes=True)
+
+        model_path = Path(self.tmpdir.name) / "model.gguf"
+        server_path = Path(self.tmpdir.name) / "llama-server.exe"
+        model_path.write_text("gguf", encoding="utf-8")
+        server_path.write_text("exe", encoding="utf-8")
+        output_dir = Path(self.tmpdir.name) / "out"
+        captured = {}
+
+        def fake_run_benchmark_pass(cache_label, model_path_arg, output_dir_arg, num_turns, port, **kwargs):
+            captured["quality_benchmarks"] = kwargs["quality_benchmarks"]
+            path = output_dir_arg / f"legacy_{cache_label}.json"
+            captured.setdefault("paths", {})[cache_label] = path
+            path.write_text(
+                json.dumps(
+                    {
+                        "meta": {"quality_benchmarks": kwargs["quality_benchmarks"]},
+                        "turns": [{"tps": 1.0, "ttft_ms": 1.0, "vram_after_mb": [1]}],
+                        "aggregate": {},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return path
+
+        with patch("gnuckle.benchmark.start_server", return_value=SimpleNamespace(pid=1)), patch(
+            "gnuckle.benchmark.kill_server", return_value=None
+        ), patch("gnuckle.benchmark.wait_for_server", return_value=True), patch(
+            "gnuckle.benchmark.warmup_server", return_value=True
+        ), patch(
+            "gnuckle.benchmark.collect_llama_bench_metrics", return_value={"available": False, "error": "missing"}
+        ), patch(
+            "gnuckle.benchmark._print_run_banner", return_value=None
+        ), patch(
+            "gnuckle.benchmark.run_benchmark_pass", side_effect=fake_run_benchmark_pass
+        ), patch(
+            "gnuckle.benchmark.prompt_open_visualizer", return_value=None
+        ), patch(
+            "gnuckle.bench_pack.runner._resolve_binary", return_value=Path("llama-perplexity")
+        ), patch(
+            "gnuckle.bench_pack.runner.subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="PPL = 6.1", stderr="")
+        ):
+            run_full_benchmark(
+                benchmark_mode="legacy",
+                model_path=model_path,
+                server_path=server_path,
+                output_dir=output_dir,
+                num_turns=1,
+                port=8080,
+                quality_bench_ids=["wikitext2_ppl"],
+            )
+
+        self.assertEqual(captured["quality_benchmarks"]["wikitext2_ppl"]["perplexity"], 6.1)
+        metrics = extract_metrics(json.loads(captured["paths"]["f16"].read_text(encoding="utf-8")))
+        self.assertEqual(metrics["wikitext2_perplexity"], 6.1)
+
+    def test_hardcoded_collect_llama_perplexity_metrics_is_removed(self) -> None:
+        source = Path("gnuckle") / "benchmark.py"
+        text = source.read_text(encoding="utf-8")
+        self.assertNotIn("def collect_llama_perplexity_metrics(", text)

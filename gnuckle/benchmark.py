@@ -12,7 +12,6 @@ import signal
 import socket
 import copy
 import webbrowser
-import zipfile
 from pathlib import Path
 from datetime import datetime
 from functools import lru_cache
@@ -1188,9 +1187,6 @@ SERVER_SEARCH_DIRS = [
     ".", "build/bin", "build/bin/Release", "build/bin/Debug",
     "bin", "build",
 ]
-DATASET_CACHE_DIR = Path.home() / ".gnuckle" / "datasets" / "wikitext-2-raw-v1"
-WIKITEXT2_RAW_URL = "https://huggingface.co/datasets/ggml-org/ci/resolve/main/wikitext-2-raw-v1.zip"
-WIKITEXT2_TEST_FILE = "wiki.test.raw"
 
 def find_server(base_dir: Path):
     """Auto-detect llama-server binary in cwd and common build dirs."""
@@ -1244,29 +1240,6 @@ def find_perplexity(server_path: Path):
     if server_path.parent.parent.parent != server_path.parent.parent:
         roots.append(server_path.parent.parent.parent)
     return _search_binary(roots, PERPLEXITY_NAMES)
-
-
-def ensure_wikitext2_dataset(cache_dir: Path | None = None) -> Path:
-    """Ensure WikiText-2 raw test file exists locally and return its path."""
-    cache_root = Path(cache_dir or DATASET_CACHE_DIR)
-    cache_root.mkdir(parents=True, exist_ok=True)
-    dataset_path = cache_root / WIKITEXT2_TEST_FILE
-    if dataset_path.is_file():
-        return dataset_path
-
-    archive_path = cache_root / "wikitext-2-raw-v1.zip"
-    request = Request(WIKITEXT2_RAW_URL, headers={"User-Agent": f"gnuckle/{__import__('gnuckle').__version__}"})
-    with urlopen(request, timeout=120) as response:
-        archive_path.write_bytes(response.read())
-
-    with zipfile.ZipFile(archive_path) as zf:
-        members = {Path(name).name: name for name in zf.namelist()}
-        member_name = members.get(WIKITEXT2_TEST_FILE)
-        if not member_name:
-            raise ValueError(f"{WIKITEXT2_TEST_FILE} not found in downloaded WikiText-2 archive")
-        with zf.open(member_name) as src, dataset_path.open("wb") as dst:
-            dst.write(src.read())
-    return dataset_path
 
 
 def parse_llama_bench_output(output: str) -> dict:
@@ -1397,78 +1370,6 @@ def collect_llama_bench_metrics(server_path: Path, model_path: Path, cache_k: st
         metrics["error"] = "unable to parse llama-bench output"
     return metrics
 
-
-def collect_llama_perplexity_metrics(server_path: Path, model_path: Path, cache_k: str, cache_v: str, preset=None, split_config=None) -> dict:
-    """Run llama-perplexity on WikiText-2 and return a required quality snapshot."""
-    preset = preset or select_preset(model_path)
-    split_config = split_config or {}
-    perplexity_path = find_perplexity(server_path)
-    dataset_path = None
-    metrics = {
-        "available": False,
-        "perplexity_path": str(perplexity_path) if perplexity_path else None,
-        "dataset_path": None,
-        "dataset_name": "wikitext-2-raw-v1",
-        "dataset_split": WIKITEXT2_TEST_FILE,
-        "perplexity": None,
-        "raw_output": None,
-        "error": None,
-    }
-    if perplexity_path is None:
-        metrics["error"] = "llama-perplexity binary not found"
-        return metrics
-
-    try:
-        dataset_path = ensure_wikitext2_dataset()
-    except Exception as exc:
-        metrics["error"] = f"failed to prepare WikiText-2 dataset: {exc}"
-        return metrics
-    metrics["dataset_path"] = str(dataset_path)
-
-    split_mode = split_config.get("split_mode", "layer")
-    main_gpu = split_config.get("main_gpu", 0)
-    tensor_split = split_config.get("tensor_split")
-    cmd = [
-        str(perplexity_path),
-        "-m", str(model_path),
-        "-f", str(dataset_path),
-        "--ctx-size", "512",
-        "-ngl", "99",
-        "--split-mode", str(split_mode),
-        "--main-gpu", str(main_gpu),
-        "--cache-type-k", cache_k,
-        "--cache-type-v", cache_v,
-    ]
-    if tensor_split:
-        cmd.extend(["--tensor-split", str(tensor_split)])
-    cmd.extend(build_llama_args_non_server(preset.get("server_args", {})))
-
-    try:
-        completed = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=1800,
-            check=False,
-        )
-    except Exception as exc:
-        metrics["error"] = str(exc)
-        return metrics
-
-    raw_output = ((completed.stdout or "") + "\n" + (completed.stderr or "")).strip()
-    metrics["raw_output"] = raw_output[:4000]
-    if completed.returncode != 0:
-        metrics["error"] = f"llama-perplexity failed with exit code {completed.returncode}"
-        return metrics
-
-    parsed = parse_llama_perplexity_output(raw_output)
-    metrics.update(parsed)
-    metrics["available"] = parsed.get("perplexity") is not None
-    if not metrics["available"]:
-        metrics["error"] = "unable to parse llama-perplexity output"
-    return metrics
 
 def prompt_gguf_selection(gguf_files):
     print("\n  Available GGUF files (ape see banana pile):\n")
@@ -2727,6 +2628,8 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                        selected_workflow_ids=None, session_bench_ids=None,
                        quality_bench_ids=None,
                        skip_quality: bool = False):
+    from gnuckle.bench_pack.trust import benchmarks_dir
+
     profile = {}
     if profile_path:
         profile = load_profile(profile_path)
@@ -2896,11 +2799,18 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
             quality_benchmarks = {}
             if skip_quality:
                 print_step("quality benchmarks skipped (--skip-quality)")
-            elif quality_bench_ids:
+            else:
+                selected_quality_ids = list(quality_bench_ids or [])
+                if not selected_quality_ids:
+                    selected_quality_ids = [
+                        path.name for path in sorted(benchmarks_dir().iterdir())
+                        if path.is_dir()
+                    ] if benchmarks_dir().exists() else []
+            if not skip_quality and selected_quality_ids:
                 from gnuckle.bench_pack.runner import run_quality_packs
 
                 quality_benchmarks = run_quality_packs(
-                    quality_bench_ids,
+                    selected_quality_ids,
                     server_path=server_path,
                     model_path=model_path,
                     cache_label=label,
@@ -2922,26 +2832,8 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                             print_step(f"{bench_id}: {summary}")
                         else:
                             print_step(f"{bench_id} unavailable (continuing without quality snapshot): {metrics.get('error', 'unknown error')}")
-            else:
-                wikitext2_metrics = collect_llama_perplexity_metrics(
-                    server_path=server_path,
-                    model_path=model_path,
-                    cache_k=cache_k,
-                    cache_v=cache_v,
-                    preset=preset,
-                    split_config=split_config,
-                )
-                quality_benchmarks["wikitext2_ppl"] = wikitext2_metrics
-                if wikitext2_metrics.get("available"):
-                    print_step(
-                        "llama-perplexity: "
-                        f"WikiText-2 PPL={wikitext2_metrics.get('perplexity')}"
-                    )
-                else:
-                    print_step(
-                        "llama-perplexity unavailable (continuing without quality snapshot): "
-                        f"{wikitext2_metrics.get('error', 'unknown error')}"
-                    )
+            elif not skip_quality:
+                print_step("no installed quality benchmark packs found (run `gnuckle bench update` then `gnuckle bench install wikitext2_ppl`)")
 
             out = None
             try:

@@ -1,0 +1,11 @@
+{
+  "benchmarks": [
+    {
+      "id": "wikitext2_ppl",
+      "version": "1.0.0",
+      "path": "benchmarks/core/wikitext2_ppl/manifest.yaml",
+      "description": "WikiText-2 perplexity through llama-perplexity",
+      "tags": ["quality", "standard", "wikitext2"]
+    }
+  ]
+}
