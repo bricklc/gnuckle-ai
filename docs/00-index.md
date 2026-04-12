@@ -38,6 +38,24 @@ Numbered docs live here so the order stays explicit.
   - canonical source-anchor map for the OpenClaude behaviors grounding the benchmark
 - `17-personal-productivity-benchmark-workflows.md`
   - five personal-use agentic workflows (journal, notes, agenda, CUL, commitment tracking)
+- `18-benchmark-workflow-spec.md`
+  - benchmark workflow specification
+- `19-benchmark-workflow-implementation-plan.md`
+  - implementation plan for workflow benchmarks
+- `20-handoff-phase1-complete.md`
+  - phase 1 handoff notes
+- `21-handoff-phase2-audit-and-remaining-metrics.md`
+  - phase 2 audit and remaining metrics
+- `22-benchmark-intent-and-target-guide.md`
+  - benchmark intent and target audience guide
+- `23-benchmark-json-format-v2.md`
+  - v2 results JSON format
+- `24-standard-quality-benchmarks-bridge.md`
+  - standard quality benchmarks (PPL, KLD, HellaSwag, etc.) as a credibility bridge — what to measure and why
+- `25-benchmark-pack-registry-architecture.md`
+  - CKAN-style benchmark pack platform: manifest spec, registry layout, client architecture, full pre-implementation security audit, revised v0.4 → v1.0 roadmap
+- `26-agentic-benchmark-preservation.md`
+  - commitment that the agentic benchmark stack survives the pack migration untouched, and why it matters
 
 - `memory.md`
   - agent memory: project intent, self-correction rules, active facts (append-only, brief)

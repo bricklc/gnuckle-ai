@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import unittest
 
-from gnuckle.benchmark import parse_llama_bench_output, parse_llama_perplexity_output
+from gnuckle.benchmark import (
+    NON_SERVER_ARG_ALLOWLIST,
+    build_llama_args,
+    build_llama_args_non_server,
+    parse_llama_bench_output,
+    parse_llama_perplexity_output,
+)
 from gnuckle.visualize import build_session_comparison_html, extract_metrics
 
 
@@ -20,7 +26,7 @@ class VisualizeTests(unittest.TestCase):
         self.assertEqual(parsed["prompt_tokens_per_second"], 19.3)
         self.assertEqual(parsed["generation_tokens_per_second"], 10.6)
 
-    def test_extract_metrics_reads_benchmark_throughput_snapshot(self) -> None:
+    def test_extract_metrics_reads_dict_keyed_quality_benchmarks(self) -> None:
         data = {
             "meta": {
                 "throughput_benchmark": {
@@ -28,10 +34,12 @@ class VisualizeTests(unittest.TestCase):
                     "prompt_tokens_per_second": 20.1,
                     "generation_tokens_per_second": 11.4,
                 },
-                "quality_benchmark": {
-                    "available": True,
-                    "perplexity": 6.123,
-                }
+                "quality_benchmarks": {
+                    "wikitext2_ppl": {
+                        "available": True,
+                        "perplexity": 6.123,
+                    },
+                },
             },
             "turns": [
                 {"tps": 10.0, "ttft_ms": 500.0, "tool_accuracy_pct": 100.0, "vram_after_mb": [1200]},
@@ -47,11 +55,37 @@ class VisualizeTests(unittest.TestCase):
         self.assertEqual(metrics["prompt_tps_bench"], 20.1)
         self.assertEqual(metrics["gen_tps_bench"], 11.4)
         self.assertEqual(metrics["wikitext2_perplexity"], 6.123)
+        self.assertTrue(metrics["quality_available"])
         self.assertEqual(metrics["tps_t1"], 10.0)
         self.assertEqual(metrics["tps_tn"], 8.0)
         self.assertEqual(metrics["vram_peak"], 1300)
         self.assertEqual(metrics["peak_context_tokens"], 4096)
         self.assertEqual(metrics["total_context_tokens"], 6144)
+
+    def test_extract_metrics_back_compat_reads_legacy_quality_benchmark(self) -> None:
+        """Old JSONs with the singular `quality_benchmark` key keep rendering."""
+        data = {
+            "meta": {
+                "throughput_benchmark": {},
+                "quality_benchmark": {"available": True, "perplexity": 7.5},
+            },
+            "turns": [{"tps": 5.0, "ttft_ms": 200.0, "tool_accuracy_pct": 100.0, "vram_after_mb": [1000]}],
+            "aggregate": {},
+        }
+        metrics = extract_metrics(data)
+        self.assertEqual(metrics["wikitext2_perplexity"], 7.5)
+        self.assertTrue(metrics["quality_available"])
+
+    def test_extract_metrics_handles_missing_quality_benchmarks(self) -> None:
+        """--skip-quality runs produce JSONs with no quality data; don't crash."""
+        data = {
+            "meta": {"throughput_benchmark": {}},
+            "turns": [{"tps": 5.0, "ttft_ms": 200.0, "tool_accuracy_pct": 100.0, "vram_after_mb": [1000]}],
+            "aggregate": {},
+        }
+        metrics = extract_metrics(data)
+        self.assertIsNone(metrics["wikitext2_perplexity"])
+        self.assertFalse(metrics["quality_available"])
 
     def test_session_comparison_dashboard_separates_context_and_provider_tokens(self) -> None:
         data = {
@@ -61,7 +95,9 @@ class VisualizeTests(unittest.TestCase):
                 "benchmark_title": "Demo Session",
                 "timestamp": "2026-04-12T07:11:58",
                 "total_turns": 2,
-                "quality_benchmark": {"available": True, "perplexity": 6.789},
+                "quality_benchmarks": {
+                    "wikitext2_ppl": {"available": True, "perplexity": 6.789},
+                },
             },
             "aggregate": {
                 "average_score": 0.95,
@@ -101,6 +137,39 @@ Final estimate: PPL = 6.4321 +/- 0.0123
 """
         parsed = parse_llama_perplexity_output(raw)
         self.assertEqual(parsed["perplexity"], 6.4321)
+
+    def test_build_llama_args_non_server_filters_sampler_flags(self) -> None:
+        """Sampler-only flags from server_args must not leak into llama-bench/perplexity."""
+        preset_server_args = {
+            "temp": 0.6,
+            "top_p": 0.95,
+            "top_k": 20,
+            "repeat_penalty": 1.1,
+        }
+        filtered = build_llama_args_non_server(preset_server_args)
+        self.assertEqual(filtered, [], "sampler flags must be dropped for non-server binaries")
+
+    def test_build_llama_args_non_server_preserves_universal_flags(self) -> None:
+        """Known-universal args (flash-attn, threads) should pass through."""
+        preset_server_args = {
+            "flash_attn": True,
+            "threads": 8,
+            "temp": 0.6,  # must be dropped
+        }
+        filtered = build_llama_args_non_server(preset_server_args)
+        self.assertIn("--flash-attn", filtered)
+        self.assertIn("--threads", filtered)
+        self.assertNotIn("--temp", filtered)
+
+    def test_build_llama_args_unfiltered_still_includes_everything(self) -> None:
+        """The server path (build_llama_args) must NOT filter — server needs all flags."""
+        args = build_llama_args({"temp": 0.6, "host": "0.0.0.0"})
+        self.assertIn("--temp", args)
+        self.assertIn("--host", args)
+
+    def test_non_server_allowlist_is_a_frozenset(self) -> None:
+        """Sanity check that the allowlist cannot be mutated at runtime."""
+        self.assertIsInstance(NON_SERVER_ARG_ALLOWLIST, frozenset)
 
 
 if __name__ == "__main__":

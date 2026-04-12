@@ -40,6 +40,7 @@ def cmd_benchmark(args):
         trace_style=args.trace_style,
         selected_workflow_ids=selected_ids,
         session_bench_ids=session_ids,
+        skip_quality=args.skip_quality,
     )
 
 
@@ -180,6 +181,11 @@ def main():
         choices=["theater", "log"],
         default="theater",
         help="terminal presentation style for live trace mode",
+    )
+    bench.add_argument(
+        "--skip-quality",
+        action="store_true",
+        help="skip quality benchmarks (llama-perplexity / WikiText-2 PPL); useful when the binary is missing or for fast iteration",
     )
     bench.set_defaults(func=cmd_benchmark)
 

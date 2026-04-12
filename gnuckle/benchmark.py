@@ -1132,6 +1132,33 @@ def build_llama_args(arg_map):
     return args
 
 
+# Server_args from presets frequently contain sampler-only flags (temp, top_p,
+# top_k, etc.) that llama-bench and llama-perplexity reject. Only forward the
+# small subset that is meaningful and universally accepted by non-server
+# llama.cpp tools. Anything not in this allowlist is dropped.
+NON_SERVER_ARG_ALLOWLIST = frozenset({
+    "flash_attn",
+    "threads",
+    "batch_size",
+    "ubatch_size",
+    "numa",
+})
+
+
+def build_llama_args_non_server(arg_map):
+    """Build CLI args for non-server binaries (llama-bench, llama-perplexity).
+
+    Filters out server-only and sampler-only flags so they never leak into
+    binaries that reject them.
+    """
+    filtered = {
+        key: value
+        for key, value in (arg_map or {}).items()
+        if key in NON_SERVER_ARG_ALLOWLIST
+    }
+    return build_llama_args(filtered)
+
+
 def append_unique_flag(cmd, flag):
     if flag not in cmd:
         cmd.append(flag)
@@ -1338,7 +1365,7 @@ def collect_llama_bench_metrics(server_path: Path, model_path: Path, cache_k: st
     ]
     if tensor_split:
         cmd.extend(["--tensor-split", str(tensor_split)])
-    cmd.extend(build_llama_args(preset.get("server_args", {})))
+    cmd.extend(build_llama_args_non_server(preset.get("server_args", {})))
 
     try:
         completed = subprocess.run(
@@ -1414,7 +1441,7 @@ def collect_llama_perplexity_metrics(server_path: Path, model_path: Path, cache_
     ]
     if tensor_split:
         cmd.extend(["--tensor-split", str(tensor_split)])
-    cmd.extend(build_llama_args(preset.get("server_args", {})))
+    cmd.extend(build_llama_args_non_server(preset.get("server_args", {})))
 
     try:
         completed = subprocess.run(
@@ -1754,7 +1781,7 @@ def call_with_metrics(client, messages, port, preset=None, base_url: str | None 
 # ── SINGLE CACHE-TYPE RUN ─────────────────────────────────────────────────────
 def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, preset=None, system_prompt=None,
                        system_prompt_source="custom_inline", split_config=None, throughput_benchmark=None,
-                       quality_benchmark=None):
+                       quality_benchmarks=None):
     base_url = DEFAULT_BASE_URL.format(port=port)
     client   = OpenAI(base_url=base_url, api_key=API_KEY)
     exact_available = probe_llamacpp_exact(base_url)
@@ -1781,7 +1808,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "token_counting": token_counting_info(exact_available=exact_available),
             "split_config": split_config,
             "throughput_benchmark": throughput_benchmark or {},
-            "quality_benchmark": quality_benchmark or {},
+            "quality_benchmarks": quality_benchmarks or {},
         },
         "turns": [],
         "aggregate": {
@@ -1817,8 +1844,9 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
     if throughput_benchmark:
         results["aggregate"]["prompt_tokens_per_second_bench"] = throughput_benchmark.get("prompt_tokens_per_second")
         results["aggregate"]["generation_tokens_per_second_bench"] = throughput_benchmark.get("generation_tokens_per_second")
-    if quality_benchmark:
-        results["aggregate"]["wikitext2_perplexity"] = quality_benchmark.get("perplexity")
+    wikitext2_metrics = (quality_benchmarks or {}).get("wikitext2_ppl") or {}
+    if wikitext2_metrics:
+        results["aggregate"]["wikitext2_perplexity"] = wikitext2_metrics.get("perplexity")
 
     messages = [
         {
@@ -2248,7 +2276,7 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
                                trace_style: str = "theater",
                                selected_workflow_ids=None,
                                throughput_benchmark=None,
-                               quality_benchmark=None):
+                               quality_benchmarks=None):
     from gnuckle.agentic_runtime import run_agentic_episode
     from gnuckle.benchmark_scoring import aggregate_workflow_runs, assign_type, finalize_benchmark_summary
     from gnuckle.workflow_loader import load_workflow_suite
@@ -2369,8 +2397,12 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
         },
         generated_at=datetime.now().isoformat(),
     )
-    summary["throughput_benchmark"] = throughput_benchmark or {}
-    summary["quality_benchmark"] = quality_benchmark or {}
+    # Nest under meta so readers can pull quality/throughput data uniformly
+    # across legacy, agentic, and session JSONs (see doc 24 §8 bug #1).
+    summary.setdefault("meta", {})
+    summary["meta"]["cache_label"] = cache_label
+    summary["meta"]["throughput_benchmark"] = throughput_benchmark or {}
+    summary["meta"]["quality_benchmarks"] = quality_benchmarks or {}
     out_path = output_dir / f"agentic_{sanitize_label(cache_label)}.json"
     out_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print_step(f"saved: {out_path.name}")
@@ -2692,7 +2724,8 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                        workflow_suite=None, session_mode=None, use_jinja=True,
                        live_trace: bool = False, trace_prompts: str = "summary",
                        trace_style: str = "theater",
-                       selected_workflow_ids=None, session_bench_ids=None):
+                       selected_workflow_ids=None, session_bench_ids=None,
+                       skip_quality: bool = False):
     profile = {}
     if profile_path:
         profile = load_profile(profile_path)
@@ -2810,7 +2843,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
             cache_k = cfg["cache_k"]
             cache_v = cfg["cache_v"]
             throughput_benchmark = {}
-            quality_benchmark = {}
+            quality_benchmarks = {}
 
             render_progress(f"cache run {i + 1}/{len(cache_configs)} ({label})", i, len(cache_configs), done=False)
             print_header(f"Run {i+1}/{len(cache_configs)}: {label}  (cache-k={cache_k} cache-v={cache_v})")
@@ -2854,29 +2887,34 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                     f"gen={throughput_benchmark.get('generation_tokens_per_second')} t/s"
                 )
             else:
-                raise RuntimeError(
-                    "llama-bench required but unavailable: "
+                print_step(
+                    "llama-bench unavailable (continuing without throughput snapshot): "
                     f"{throughput_benchmark.get('error', 'unknown error')}"
                 )
 
-            quality_benchmark = collect_llama_perplexity_metrics(
-                server_path=server_path,
-                model_path=model_path,
-                cache_k=cache_k,
-                cache_v=cache_v,
-                preset=preset,
-                split_config=split_config,
-            )
-            if quality_benchmark.get("available"):
-                print_step(
-                    "llama-perplexity: "
-                    f"WikiText-2 PPL={quality_benchmark.get('perplexity')}"
-                )
+            quality_benchmarks = {}
+            if skip_quality:
+                print_step("quality benchmarks skipped (--skip-quality)")
             else:
-                raise RuntimeError(
-                    "llama-perplexity required but unavailable: "
-                    f"{quality_benchmark.get('error', 'unknown error')}"
+                wikitext2_metrics = collect_llama_perplexity_metrics(
+                    server_path=server_path,
+                    model_path=model_path,
+                    cache_k=cache_k,
+                    cache_v=cache_v,
+                    preset=preset,
+                    split_config=split_config,
                 )
+                quality_benchmarks["wikitext2_ppl"] = wikitext2_metrics
+                if wikitext2_metrics.get("available"):
+                    print_step(
+                        "llama-perplexity: "
+                        f"WikiText-2 PPL={wikitext2_metrics.get('perplexity')}"
+                    )
+                else:
+                    print_step(
+                        "llama-perplexity unavailable (continuing without quality snapshot): "
+                        f"{wikitext2_metrics.get('error', 'unknown error')}"
+                    )
 
             out = None
             try:
@@ -2898,7 +2936,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                         trace_style=trace_style,
                         selected_workflow_ids=selected_workflow_ids,
                         throughput_benchmark=throughput_benchmark,
-                        quality_benchmark=quality_benchmark,
+                        quality_benchmarks=quality_benchmarks,
                     )
 
                     # Run selected session benchmarks after workflow pass
@@ -2926,7 +2964,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                                 session_path = output_path / f"session_{bench['id']}_{sanitize_label(label)}.json"
                                 session_out["meta"]["cache_label"] = label
                                 session_out["meta"]["throughput_benchmark"] = throughput_benchmark
-                                session_out["meta"]["quality_benchmark"] = quality_benchmark
+                                session_out["meta"]["quality_benchmarks"] = quality_benchmarks
                                 session_path.write_text(json.dumps(session_out, indent=2, default=str), encoding="utf-8")
                                 print_step(f"session benchmark saved: {session_path.name}")
                             except Exception as se:
@@ -2955,7 +2993,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                             )
                             session_out["meta"]["cache_label"] = label
                             session_out["meta"]["throughput_benchmark"] = throughput_benchmark
-                            session_out["meta"]["quality_benchmark"] = quality_benchmark
+                            session_out["meta"]["quality_benchmarks"] = quality_benchmarks
                             session_path = output_path / f"session_{bench['id']}_{sanitize_label(label)}.json"
                             session_path.write_text(json.dumps(session_out, indent=2, default=str), encoding="utf-8")
                             out = session_path
@@ -2975,7 +3013,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                         system_prompt_source=system_prompt_source,
                         split_config=split_config,
                         throughput_benchmark=throughput_benchmark,
-                        quality_benchmark=quality_benchmark,
+                        quality_benchmarks=quality_benchmarks,
                     )
                 if out is not None:
                     output_files.append(out)

@@ -709,7 +709,13 @@ def extract_metrics(data):
     meta = data.get("meta", {})
     aggregate = data.get("aggregate", {}) or {}
     throughput_benchmark = meta.get("throughput_benchmark", {}) or {}
-    quality_benchmark = meta.get("quality_benchmark", {}) or {}
+    quality_benchmarks = meta.get("quality_benchmarks", {}) or {}
+    # Back-compat: old JSONs wrote a single `quality_benchmark` key; treat it
+    # as the wikitext2_ppl slot so dashboards keep rendering historical runs.
+    legacy_quality = meta.get("quality_benchmark")
+    if legacy_quality and "wikitext2_ppl" not in quality_benchmarks:
+        quality_benchmarks = {**quality_benchmarks, "wikitext2_ppl": legacy_quality}
+    wikitext2_metrics = quality_benchmarks.get("wikitext2_ppl", {}) or {}
     tps_list = [t.get("tps", 0) for t in turns if t.get("tps", 0) > 0]
     ttft_list = [t.get("ttft_ms") for t in turns if t.get("ttft_ms") is not None]
     acc_list = [t.get("tool_accuracy_pct") for t in turns if t.get("tool_accuracy_pct") is not None]
@@ -728,8 +734,8 @@ def extract_metrics(data):
         "prompt_tps_bench": throughput_benchmark.get("prompt_tokens_per_second"),
         "gen_tps_bench": throughput_benchmark.get("generation_tokens_per_second"),
         "throughput_available": bool(throughput_benchmark.get("available")),
-        "wikitext2_perplexity": quality_benchmark.get("perplexity"),
-        "quality_available": bool(quality_benchmark.get("available")),
+        "wikitext2_perplexity": wikitext2_metrics.get("perplexity"),
+        "quality_available": bool(wikitext2_metrics.get("available")),
         "tps_t1": round(t1_tps, 2),
         "tps_tn": round(tn_tps, 2),
         "tps_all": [round(v, 2) for v in tps_list],
@@ -2283,8 +2289,12 @@ def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
         pass_rate = float(summary.get("pass_rate", 0) or 0)
         elapsed = float(summary.get("session_elapsed_s", 0) or 0)
         vram_peak = float(((summary.get("final_hardware") or {}).get("vram_peak_mb", 0)) or 0)
-        quality_benchmark = by_cache[cache].get("meta", {}).get("quality_benchmark", {}) or {}
-        wikitext2_perplexity = quality_benchmark.get("perplexity")
+        meta_block = by_cache[cache].get("meta", {}) or {}
+        quality_benchmarks = meta_block.get("quality_benchmarks", {}) or {}
+        legacy_quality = meta_block.get("quality_benchmark")
+        if legacy_quality and "wikitext2_ppl" not in quality_benchmarks:
+            quality_benchmarks = {**quality_benchmarks, "wikitext2_ppl": legacy_quality}
+        wikitext2_perplexity = (quality_benchmarks.get("wikitext2_ppl") or {}).get("perplexity")
         provider_total_tokens = int(summary.get("provider_usage_total_tokens", 0) or 0)
         peak_context_tokens = int(
             summary.get("peak_context_tokens_measured")
