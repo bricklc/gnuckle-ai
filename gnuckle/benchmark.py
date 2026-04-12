@@ -219,6 +219,14 @@ def render_progress(label: str, current: int, total: int, width: int = 28, done:
     print(f"  [{bar}] {percent:>3}%  {label}", end=end, flush=True)
 
 
+def render_banana_loading(label: str, current: int, total: int = 5, done: bool = False) -> None:
+    total = max(1, int(total))
+    current = max(0, min(int(current), total))
+    bar = "[" + ("🍌" * current) + ("·" * (total - current)) + "]"
+    end = "\n" if done else "\r"
+    print(f"  {bar}  {label}", end=end, flush=True)
+
+
 def sanitize_label(text: str) -> str:
     cleaned = "".join(ch.lower() if ch.isalnum() else "-" for ch in (text or "unknown"))
     while "--" in cleaned:
@@ -1439,6 +1447,7 @@ def wait_for_server(port, timeout=SERVER_WAIT_S):
                     temperature=0,
                 )
                 ape_print("server_up")
+                render_banana_loading("server loaded", 5, 5, done=True)
                 render_progress("server ready", timeout, timeout, done=True)
                 return True
             except Exception as exc:
@@ -1448,8 +1457,11 @@ def wait_for_server(port, timeout=SERVER_WAIT_S):
             ape_print("loading")
             poked = True
         elapsed = min(timeout, max(0, round(timeout - (deadline - time.time()))))
+        banana_step = min(5, max(1, int((elapsed / max(1, timeout)) * 5) + (1 if elapsed else 0)))
+        render_banana_loading("server loading", banana_step, 5, done=False)
         render_progress("waiting for server", elapsed, timeout, done=False)
         time.sleep(1)
+    render_banana_loading("server load timed out", 5, 5, done=True)
     render_progress("server wait timed out", timeout, timeout, done=True)
     return False
 
@@ -1472,6 +1484,7 @@ def warmup_server(port, preset=None, system_prompt=None, timeout=WARMUP_WAIT_S):
             )
             content = (resp.choices[0].message.content or "").strip() if resp.choices else ""
             if content or resp.choices:
+                render_banana_loading("model warmed", 5, 5, done=True)
                 render_progress("model warmup complete", timeout, timeout, done=True)
                 print("  >> warmup done. model answer received.")
                 return True
@@ -1482,8 +1495,11 @@ def warmup_server(port, preset=None, system_prompt=None, timeout=WARMUP_WAIT_S):
             if not is_server_loading_error(exc):
                 print(f"  >> warmup retry after startup error: {exc}")
         elapsed = min(timeout, max(0, round(timeout - (deadline - time.time()))))
+        banana_step = min(5, max(1, int((elapsed / max(1, timeout)) * 5) + (1 if elapsed else 0)))
+        render_banana_loading("warming model", banana_step, 5, done=False)
         render_progress("warming model", elapsed, timeout, done=False)
         time.sleep(2)
+    render_banana_loading("warmup timed out", 5, 5, done=True)
     render_progress("warmup timed out", timeout, timeout, done=True)
     return False
 

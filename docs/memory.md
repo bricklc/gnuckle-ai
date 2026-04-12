@@ -50,3 +50,4 @@ Context is treated as a scarce budget. Failure is preserved as data, not a kill 
 2026-04-10 - Version bump preference is small forward increments (for example `0.2.8` to `0.2.9`, or `+0.0.1` when requested) rather than reusing an already-used version.
 2026-04-12 - v0.5.0 introduces the declarative pack-runtime foundation and `gnuckle bench` CLI, but the agentic benchmark stack remains the product and must not be migrated to packs during the v0.4 to v1.0 arc.
 2026-04-12 - v0.6.0 seeds the first canary pack `wikitext2_ppl` in the bundled `benchmark-index` and removes the old hardcoded WikiText-2 PPL collection path from `benchmark.py`.
+2026-04-12 - v0.6.1 adds an interactive `gnuckle menu` flow for model/profile/benchmark selection with saveable preferences, and the server startup path now shows a five-slot banana loading bar.

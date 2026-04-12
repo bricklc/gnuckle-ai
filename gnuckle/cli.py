@@ -57,6 +57,12 @@ def cmd_visualize(args):
     run_visualize(args.results_dir)
 
 
+def cmd_menu(_args):
+    from gnuckle.menu import run_interactive_menu
+
+    run_interactive_menu()
+
+
 def cmd_update(_args):
     """Update gnuckle in place."""
     from gnuckle.update import run_update
@@ -296,6 +302,14 @@ def main():
         help="directory containing benchmark JSON files",
     )
     viz.set_defaults(func=cmd_visualize)
+
+    menu = subparsers.add_parser(
+        "menu",
+        aliases=["interactive"],
+        help="open the interactive benchmark menu",
+        description="Interactive model/profile/benchmark picker with save-and-run flow.",
+    )
+    menu.set_defaults(func=cmd_menu)
 
     if argcomplete is not None:
         argcomplete.autocomplete(parser)
