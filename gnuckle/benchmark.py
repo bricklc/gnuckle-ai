@@ -2642,6 +2642,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                        live_trace: bool = False, trace_prompts: str = "summary",
                        trace_style: str = "theater",
                        selected_workflow_ids=None, session_bench_ids=None,
+                       cache_labels=None,
                        quality_bench_ids=None,
                        skip_quality: bool = False):
     from gnuckle.bench_pack.trust import benchmarks_dir
@@ -2665,7 +2666,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
             use_jinja = bool(profile.get("use_jinja"))
         profile_preset = profile.get("sampler_preset")
         sampler_overrides = profile.get("sampler")
-        cache_labels = profile.get("cache_types")
+        cache_labels = cache_labels or profile.get("cache_types")
         system_prompt = profile.get("system_prompt")
         system_prompt_source = "profile_custom" if system_prompt else None
     else:

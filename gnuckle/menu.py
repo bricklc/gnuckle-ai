@@ -363,22 +363,27 @@ def run_interactive_menu() -> None:
                 continue
             print()
             print_splash()
-            run_full_benchmark(
-                benchmark_mode=state["mode"],
-                model_path=state["model_path"],
-                server_path=state.get("server_path"),
-                scan_dir=state.get("scan_dir"),
-                output_dir=state.get("output_dir"),
-                num_turns=state.get("turns"),
-                port=state.get("port"),
-                workflow_suite=state.get("workflow_suite"),
-                session_mode=state.get("session_mode"),
-                use_jinja=state.get("use_jinja", True),
-                selected_workflow_ids=state.get("selected_workflow_ids"),
-                session_bench_ids=state.get("session_bench_ids"),
-                quality_bench_ids=state.get("quality_bench_ids"),
-                skip_quality=state.get("skip_quality", False),
-            )
+            run_benchmark_from_menu_state(state)
             return
         else:
             return
+
+
+def run_benchmark_from_menu_state(state: dict) -> None:
+    run_full_benchmark(
+        benchmark_mode=state["mode"],
+        model_path=state["model_path"],
+        server_path=state.get("server_path"),
+        scan_dir=state.get("scan_dir"),
+        output_dir=state.get("output_dir"),
+        num_turns=state.get("turns"),
+        port=state.get("port"),
+        workflow_suite=state.get("workflow_suite"),
+        session_mode=state.get("session_mode"),
+        use_jinja=state.get("use_jinja", True),
+        selected_workflow_ids=state.get("selected_workflow_ids"),
+        session_bench_ids=state.get("session_bench_ids"),
+        cache_labels=state.get("cache_types"),
+        quality_bench_ids=state.get("quality_bench_ids"),
+        skip_quality=state.get("skip_quality", False),
+    )

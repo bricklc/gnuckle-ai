@@ -45,6 +45,7 @@ def cmd_benchmark(args):
         trace_style=args.trace_style,
         selected_workflow_ids=selected_ids,
         session_bench_ids=session_ids,
+        cache_labels=None,
         quality_bench_ids=quality_ids,
         skip_quality=args.skip_quality,
     )

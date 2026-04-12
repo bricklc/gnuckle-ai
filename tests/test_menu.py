@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from gnuckle.menu import (
     _apply_profile_to_state,
@@ -10,6 +11,7 @@ from gnuckle.menu import (
     menu_state_to_profile,
     render_banana_loading_bar,
     render_menu_summary,
+    run_benchmark_from_menu_state,
 )
 from gnuckle.profile import list_profiles, load_profile, profiles_dir, save_profile
 
@@ -18,7 +20,7 @@ class MenuTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmpdir.cleanup)
-        self.home_patch = unittest.mock.patch.dict(os.environ, {"USERPROFILE": self.tmpdir.name, "HOME": self.tmpdir.name})
+        self.home_patch = patch.dict(os.environ, {"USERPROFILE": self.tmpdir.name, "HOME": self.tmpdir.name})
         self.home_patch.start()
         self.addCleanup(self.home_patch.stop)
 
@@ -69,3 +71,15 @@ class MenuTests(unittest.TestCase):
         self.assertIn(target, listed)
         loaded = load_profile(saved)
         self.assertTrue(loaded["model_path"].endswith("model.gguf"))
+
+    def test_run_benchmark_from_menu_state_forwards_cache_selection(self) -> None:
+        state = default_menu_state()
+        state["model_path"] = "C:/models/demo.gguf"
+        state["server_path"] = "C:/bin/llama-server.exe"
+        state["cache_types"] = ["f16", "turbo3"]
+        state["quality_bench_ids"] = ["wikitext2_ppl"]
+        with patch("gnuckle.menu.run_full_benchmark") as mocked:
+            run_benchmark_from_menu_state(state)
+        kwargs = mocked.call_args.kwargs
+        self.assertEqual(kwargs["cache_labels"], ["f16", "turbo3"])
+        self.assertEqual(kwargs["quality_bench_ids"], ["wikitext2_ppl"])
