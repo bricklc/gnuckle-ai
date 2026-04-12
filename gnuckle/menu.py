@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import os
+import sys
 from pathlib import Path
 
 from gnuckle.bench_pack.registry import list_available_packs
@@ -14,9 +16,6 @@ from gnuckle.benchmark import (
     DEFAULT_TURNS,
     DEFAULT_WORKFLOW_SUITE,
     _is_interactive_terminal,
-    _prompt_session_benchmark_selection,
-    _prompt_workflow_selection,
-    find_bench,
     find_gguf_files,
     find_server,
     get_cache_configs,
@@ -27,25 +26,189 @@ from gnuckle.benchmark import (
 from gnuckle.profile import list_profiles, load_profile, profiles_dir, save_profile
 from gnuckle.splash import print_splash
 
+MENU_WIDTH = 88
+
 
 def render_banana_loading_bar(current: int, total: int = 5) -> str:
     current = max(0, min(int(current), int(total)))
     return "[" + ("🍌" * current) + ("·" * (total - current)) + "]"
 
 
-def _prompt_choice(prompt: str, max_value: int, allow_blank: bool = False) -> int | None:
-    while True:
-        raw = input(prompt).strip()
-        if not raw and allow_blank:
-            return None
-        try:
-            value = int(raw)
-        except ValueError:
-            print("  enter a number.")
+def _fit(text: str, width: int) -> str:
+    text = str(text or "")
+    if len(text) <= width:
+        return text
+    if width <= 3:
+        return text[:width]
+    return text[: width - 3] + "..."
+
+
+def _wrap(text: str, width: int) -> list[str]:
+    text = str(text or "")
+    if not text:
+        return [""]
+    words = text.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        trial = word if not current else f"{current} {word}"
+        if len(trial) <= width:
+            current = trial
             continue
-        if 1 <= value <= max_value:
-            return value
-        print("  out of range.")
+        if current:
+            lines.append(current)
+            current = word
+            continue
+        lines.append(_fit(word, width))
+        current = ""
+    if current:
+        lines.append(current)
+    return lines or [""]
+
+
+def _clear_screen() -> None:
+    os.system("cls" if os.name == "nt" else "clear")
+
+
+def _box(title: str, lines: list[str], footer: str | None = None) -> str:
+    inner = MENU_WIDTH - 4
+    rendered = [f"┌{'─' * (MENU_WIDTH - 2)}┐", f"│ {title:<{inner}} │", f"├{'─' * (MENU_WIDTH - 2)}┤"]
+    for line in lines:
+        rendered.append(f"│ {_fit(line, inner):<{inner}} │")
+    if footer:
+        rendered.append(f"├{'─' * (MENU_WIDTH - 2)}┤")
+        for line in _wrap(footer, inner):
+            rendered.append(f"│ {line:<{inner}} │")
+    rendered.append(f"└{'─' * (MENU_WIDTH - 2)}┘")
+    return "\n".join(rendered)
+
+
+def _render_screen(title: str, body_lines: list[str], summary: str | None = None, footer: str | None = None) -> None:
+    _clear_screen()
+    if summary:
+        print(_box("Interactive Menu", [summary]))
+        print()
+    print(_box(title, body_lines, footer=footer))
+
+
+def _read_key() -> str:
+    if os.name == "nt":
+        import msvcrt
+
+        first = msvcrt.getwch()
+        if first in ("\x00", "\xe0"):
+            second = msvcrt.getwch()
+            return {
+                "H": "UP",
+                "P": "DOWN",
+                "K": "LEFT",
+                "M": "RIGHT",
+            }.get(second, second)
+        if first == "\r":
+            return "ENTER"
+        if first == " ":
+            return "SPACE"
+        if first == "\x1b":
+            return "ESC"
+        return first
+
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        first = sys.stdin.read(1)
+        if first == "\x1b":
+            second = sys.stdin.read(1)
+            third = sys.stdin.read(1)
+            if second == "[":
+                return {
+                    "A": "UP",
+                    "B": "DOWN",
+                    "C": "RIGHT",
+                    "D": "LEFT",
+                }.get(third, "ESC")
+            return "ESC"
+        if first in ("\r", "\n"):
+            return "ENTER"
+        if first == " ":
+            return "SPACE"
+        return first
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+def _option_lines(
+    options: list[dict],
+    cursor: int,
+    multi: bool = False,
+    selected: set[int] | None = None,
+) -> list[str]:
+    selected = selected or set()
+    lines: list[str] = []
+    for idx, option in enumerate(options):
+        pointer = ">" if idx == cursor else " "
+        marker = f"[{'x' if idx in selected else ' '}] " if multi else ""
+        lines.append(f"{pointer} {marker}{_fit(option['label'], MENU_WIDTH - 10)}")
+        detail = option.get("detail")
+        if detail:
+            lines.append(f"    {_fit(detail, MENU_WIDTH - 8)}")
+    return lines
+
+
+def _arrow_select(
+    title: str,
+    options: list[dict],
+    summary: str | None = None,
+    footer: str | None = None,
+    *,
+    multi: bool = False,
+    selected: set[int] | None = None,
+    allow_escape: bool = False,
+) -> int | list[int] | None:
+    if not options:
+        return [] if multi else None
+
+    cursor = 0
+    picked = set(selected or ([] if not multi else range(len(options))))
+
+    while True:
+        help_text = footer
+        if multi:
+            help_text = (help_text + " | " if help_text else "") + "↑/↓ move  space toggle  a all  n none  enter accept"
+        else:
+            help_text = (help_text + " | " if help_text else "") + "↑/↓ move  enter select"
+        if allow_escape:
+            help_text += "  esc back"
+
+        _render_screen(
+            title,
+            _option_lines(options, cursor, multi=multi, selected=picked),
+            summary=summary,
+            footer=help_text,
+        )
+        key = _read_key()
+        if key == "UP":
+            cursor = (cursor - 1) % len(options)
+        elif key == "DOWN":
+            cursor = (cursor + 1) % len(options)
+        elif multi and key == "SPACE":
+            if cursor in picked:
+                picked.remove(cursor)
+            else:
+                picked.add(cursor)
+        elif multi and str(key).lower() == "a":
+            picked = set(range(len(options)))
+        elif multi and str(key).lower() == "n":
+            picked.clear()
+        elif key == "ENTER":
+            if multi:
+                return sorted(picked)
+            return cursor
+        elif key == "ESC" and allow_escape:
+            return None
 
 
 def _auto_detect_server(model_path: Path | None, scan_dir: Path | None) -> Path | None:
@@ -69,47 +232,47 @@ def _auto_detect_server(model_path: Path | None, scan_dir: Path | None) -> Path 
     return None
 
 
-def _pick_model(scan_dir: Path | None = None) -> Path | None:
-    root = Path(scan_dir or Path.cwd())
+def _pick_model(state: dict) -> Path | None:
+    root = Path(state.get("scan_dir") or Path.cwd())
     ggufs = find_gguf_files(root)
     if not ggufs:
-        print(f"  no .gguf files found under {root}")
+        _render_screen("Models", [f"no .gguf files found under {root}"], summary=render_menu_summary(state))
+        input("\npress Enter to continue...")
         return None
-    print()
-    print("  Models")
-    for idx, path in enumerate(ggufs, start=1):
-        print(f"  {idx:>2}. {path.name}")
-    choice = _prompt_choice("  pick model: ", len(ggufs))
-    return ggufs[(choice or 1) - 1]
-
-
-def _pick_saved_profile() -> str | None:
-    profiles = list_profiles()
-    if not profiles:
-        print("  no saved profiles found.")
-        return None
-    print()
-    print("  Saved profiles")
-    for idx, path in enumerate(profiles, start=1):
-        print(f"  {idx:>2}. {path.stem}")
-    choice = _prompt_choice("  pick profile: ", len(profiles), allow_blank=True)
+    options = [{"label": path.name, "detail": str(path)} for path in ggufs]
+    choice = _arrow_select("Select Model", options, summary=render_menu_summary(state), allow_escape=True)
     if choice is None:
         return None
-    return str(profiles[choice - 1])
+    return ggufs[int(choice)]
 
 
-def _pick_sampler_preset(current_model: Path | None) -> str | None:
+def _pick_saved_profile(state: dict) -> str | None:
+    profiles = list_profiles()
+    if not profiles:
+        _render_screen("Saved Profiles", ["no saved profiles found."], summary=render_menu_summary(state))
+        input("\npress Enter to continue...")
+        return None
+    options = [{"label": path.stem, "detail": str(path)} for path in profiles]
+    choice = _arrow_select("Load Saved Profile", options, summary=render_menu_summary(state), allow_escape=True)
+    if choice is None:
+        return None
+    return str(profiles[int(choice)])
+
+
+def _pick_sampler_preset(current_model: Path | None, state: dict) -> str | None:
     presets_doc = load_presets()
     options = [presets_doc["default"]] + list(presets_doc.get("presets", []))
-    print()
-    print("  Sampler presets")
-    for idx, preset in enumerate(options, start=1):
-        marker = ""
-        if current_model is not None and select_preset(current_model).get("name") == preset.get("name"):
-            marker = " (auto)"
-        print(f"  {idx:>2}. {preset.get('name')}{marker} - {preset.get('description', '')}")
-    choice = _prompt_choice("  pick preset: ", len(options))
-    return options[(choice or 1) - 1].get("name")
+    auto_name = select_preset(current_model).get("name") if current_model is not None else None
+    rendered = []
+    for preset in options:
+        label = preset.get("name", "unnamed")
+        if auto_name == label:
+            label = f"{label} [auto]"
+        rendered.append({"label": label, "detail": preset.get("description", "")})
+    choice = _arrow_select("Select Sampler Preset", rendered, summary=render_menu_summary(state), allow_escape=True)
+    if choice is None:
+        return None
+    return options[int(choice)].get("name")
 
 
 def _edit_sampler_values(state: dict) -> None:
@@ -122,8 +285,14 @@ def _edit_sampler_values(state: dict) -> None:
         "repeat_last_n": sampler.get("repeat_last_n", 64),
         "min_p": sampler.get("min_p", 0.0),
     }
-    print()
-    print("  Sampler overrides (blank keeps current)")
+    _render_screen(
+        "Sampler Overrides",
+        [
+            "blank keeps current value",
+            *[f"{key} = {value}" for key, value in current.items()],
+        ],
+        summary=render_menu_summary(state),
+    )
     casts = {
         "temp": float,
         "top_p": float,
@@ -133,87 +302,135 @@ def _edit_sampler_values(state: dict) -> None:
         "min_p": float,
     }
     for key, cast in casts.items():
-        raw = input(f"  {key} [{current[key]}]: ").strip()
+        raw = input(f"{key} [{current[key]}]: ").strip()
         if not raw:
             continue
         try:
             sampler[key] = cast(raw)
         except ValueError:
-            print(f"  invalid {key}, keeping {current[key]}")
+            print(f"invalid {key}, keeping {current[key]}")
+            input("press Enter to continue...")
 
 
-def _pick_benchmark_mode() -> str:
-    options = ["legacy", "agentic", "session"]
-    print()
-    print("  Benchmark mode")
-    for idx, mode in enumerate(options, start=1):
-        print(f"  {idx:>2}. {mode}")
-    choice = _prompt_choice("  pick mode: ", len(options))
-    return options[(choice or 1) - 1]
+def _pick_benchmark_mode(state: dict) -> str | None:
+    options = [
+        {"label": "legacy", "detail": "classic cache sweep plus benchmark snapshots"},
+        {"label": "agentic", "detail": "workflow + session evaluation stack"},
+        {"label": "session", "detail": "session benchmarks only"},
+    ]
+    choice = _arrow_select("Select Benchmark Mode", options, summary=render_menu_summary(state), allow_escape=True)
+    if choice is None:
+        return None
+    return options[int(choice)]["label"]
 
 
-def _pick_cache_types() -> list[str]:
-    options = ["f16", "q8_0", "q4_0", "turbo3"]
-    selected = set(range(len(options)))
-    while True:
-        print()
-        print("  Cache types")
-        for idx, label in enumerate(options, start=1):
-            marker = "x" if (idx - 1) in selected else " "
-            print(f"  {idx:>2}. [{marker}] {label}")
-        raw = input("  toggle numbers, 'all', 'done': ").strip().lower()
-        if raw in {"done", ""}:
-            break
-        if raw == "all":
-            selected = set(range(len(options)))
-            continue
-        for part in raw.split(","):
-            try:
-                idx = int(part.strip()) - 1
-            except ValueError:
-                continue
-            if 0 <= idx < len(options):
-                if idx in selected:
-                    selected.remove(idx)
-                else:
-                    selected.add(idx)
-        if not selected:
-            selected = set(range(len(options)))
-    return [options[idx] for idx in sorted(selected)]
+def _pick_cache_types(state: dict) -> list[str]:
+    options = [{"label": cfg["label"], "detail": f"cache-k={cfg['cache_k']} cache-v={cfg['cache_v']}"} for cfg in get_cache_configs()]
+    selected = {
+        idx for idx, cfg in enumerate(get_cache_configs()) if cfg["label"] in (state.get("cache_types") or [])
+    }
+    picks = _arrow_select(
+        "Select Cache Quantizations",
+        options,
+        summary=render_menu_summary(state),
+        multi=True,
+        selected=selected,
+        allow_escape=True,
+    )
+    if picks is None:
+        return state.get("cache_types") or [cfg["label"] for cfg in get_cache_configs()]
+    if not picks:
+        return [cfg["label"] for cfg in get_cache_configs()]
+    return [get_cache_configs()[idx]["label"] for idx in picks]
 
 
-def _pick_quality_packs() -> list[str]:
+def _pick_quality_packs(state: dict) -> list[str]:
     installed = [path.name for path in benchmarks_dir().iterdir() if path.is_dir()] if benchmarks_dir().exists() else []
     available = list_available_packs()
     options = installed or [entry.get("id") for entry in available if entry.get("id")]
     options = [option for option in options if option]
     if not options:
-        print("  no quality packs available yet.")
         return []
+    rendered = [{"label": option, "detail": "quality benchmark pack"} for option in options]
+    preselected = set(range(len(options))) if not state.get("quality_bench_ids") else {
+        idx for idx, option in enumerate(options) if option in state.get("quality_bench_ids", [])
+    }
+    picks = _arrow_select(
+        "Select Quality Benchmarks",
+        rendered,
+        summary=render_menu_summary(state),
+        multi=True,
+        selected=preselected,
+        allow_escape=True,
+    )
+    if picks is None:
+        return state.get("quality_bench_ids", [])
+    return [options[idx] for idx in picks]
+
+
+def _pick_workflow_ids(state: dict) -> list[str] | None:
+    from gnuckle.workflow_loader import load_workflow_suite
+
+    workflows = load_workflow_suite(state["workflow_suite"])
+    if not workflows:
+        return None
+    options = []
+    for workflow in workflows:
+        difficulty = workflow.difficulty[0].upper() if workflow.difficulty else "?"
+        options.append(
+            {
+                "label": f"[{workflow.benchmark_layer}] {workflow.title}",
+                "detail": f"{difficulty} | {workflow.workflow_id}",
+            }
+        )
     selected = set(range(len(options)))
-    while True:
-        print()
-        print("  Quality benchmarks")
-        for idx, label in enumerate(options, start=1):
-            marker = "x" if (idx - 1) in selected else " "
-            print(f"  {idx:>2}. [{marker}] {label}")
-        raw = input("  toggle numbers, 'none', 'done': ").strip().lower()
-        if raw in {"done", ""}:
-            break
-        if raw == "none":
-            selected.clear()
-            break
-        for part in raw.split(","):
-            try:
-                idx = int(part.strip()) - 1
-            except ValueError:
-                continue
-            if 0 <= idx < len(options):
-                if idx in selected:
-                    selected.remove(idx)
-                else:
-                    selected.add(idx)
-    return [options[idx] for idx in sorted(selected)]
+    picks = _arrow_select(
+        "Select Workflow Benchmarks",
+        options,
+        summary=render_menu_summary(state),
+        multi=True,
+        selected=selected,
+        allow_escape=True,
+    )
+    if picks is None or len(picks) == len(options):
+        return None
+    if not picks:
+        return None
+    return [workflows[idx].workflow_id for idx in picks]
+
+
+def _pick_session_bench_ids(state: dict) -> list[str] | None:
+    from gnuckle.session_runner import discover_benchmarks
+
+    benchmarks = discover_benchmarks()
+    if not benchmarks:
+        return None
+    options = []
+    for bench in benchmarks:
+        tags = ", ".join(bench.get("tags", [])[:3]) or "no tags"
+        turns = len(bench.get("turns", []))
+        options.append(
+            {
+                "label": f"{bench['title']} ({turns}t)",
+                "detail": f"{tags} | {bench.get('id')}",
+            }
+        )
+    selected = set(range(len(options)))
+    picks = _arrow_select(
+        "Select Session Benchmarks",
+        options,
+        summary=render_menu_summary(state),
+        multi=True,
+        selected=selected,
+        allow_escape=True,
+    )
+    if picks is None:
+        return state.get("session_bench_ids")
+    if not picks:
+        return None
+    if len(picks) == len(options):
+        return None
+    return [benchmarks[idx]["id"] for idx in picks]
 
 
 def menu_state_to_profile(state: dict) -> dict:
@@ -297,75 +514,92 @@ def render_menu_summary(state: dict) -> str:
 
 
 def _save_preferences(state: dict) -> str:
-    name = input("  save profile as: ").strip()
+    _render_screen("Save Preferences", ["type a profile name and press Enter"], summary=render_menu_summary(state))
+    name = input("profile name: ").strip()
     if not name:
         raise ValueError("profile name cannot be empty")
     target = profiles_dir() / f"{name}.json"
     return save_profile(target, menu_state_to_profile(state))
 
 
+def _configure_benchmarks(state: dict) -> None:
+    picked_mode = _pick_benchmark_mode(state)
+    if picked_mode:
+        state["mode"] = picked_mode
+    state["cache_types"] = _pick_cache_types(state)
+    state["quality_bench_ids"] = _pick_quality_packs(state)
+    state["skip_quality"] = not bool(state["quality_bench_ids"])
+    if state["mode"] == "agentic":
+        state["selected_workflow_ids"] = _pick_workflow_ids(state)
+        state["session_bench_ids"] = _pick_session_bench_ids(state)
+    elif state["mode"] == "session":
+        state["selected_workflow_ids"] = None
+        state["session_bench_ids"] = _pick_session_bench_ids(state)
+    else:
+        state["selected_workflow_ids"] = None
+        state["session_bench_ids"] = None
+
+
 def run_interactive_menu() -> None:
     if not _is_interactive_terminal():
         raise SystemExit("interactive menu requires a TTY")
     state = default_menu_state()
+
     while True:
-        print()
-        print("  Interactive Menu")
-        print(f"  {render_menu_summary(state)}")
-        print("   1. Select model")
-        print("   2. Load saved profile")
-        print("   3. Select sampler preset")
-        print("   4. Edit temps / sampler overrides")
-        print("   5. Select benchmarks")
-        print("   6. Save preferences")
-        print("   7. Run benchmark")
-        print("   8. Exit")
-        choice = _prompt_choice("  choose: ", 8)
-        if choice == 1:
-            model = _pick_model(Path(state["scan_dir"]) if state.get("scan_dir") else None)
+        options = [
+            {"label": "Select model", "detail": Path(state["model_path"]).name if state.get("model_path") else "no model selected"},
+            {"label": "Load saved profile", "detail": "apply a saved gnuckle menu profile"},
+            {"label": "Select sampler preset", "detail": state.get("sampler_preset") or "auto"},
+            {"label": "Edit temps / sampler overrides", "detail": "manual temp, top-p, top-k, repeat penalties"},
+            {"label": "Select benchmarks", "detail": f"{state['mode']} | {','.join(state['cache_types'])}"},
+            {"label": "Save preferences", "detail": "write current menu state to ~/.gnuckle/profiles"},
+            {"label": "Run benchmark", "detail": "launch benchmark with current selection"},
+            {"label": "Exit", "detail": "leave menu"},
+        ]
+        choice = _arrow_select(
+            "Interactive Menu",
+            options,
+            summary=render_menu_summary(state),
+            footer="bordered menu mode active",
+        )
+        if choice == 0:
+            model = _pick_model(state)
             if model is not None:
                 state["model_path"] = str(model)
                 auto_server = _auto_detect_server(model, Path(state["scan_dir"]) if state.get("scan_dir") else None)
                 if auto_server is not None:
                     state["server_path"] = str(auto_server)
-        elif choice == 2:
-            picked = _pick_saved_profile()
+        elif choice == 1:
+            picked = _pick_saved_profile(state)
             if picked:
                 state = _apply_profile_to_state(state, load_profile(picked))
+        elif choice == 2:
+            if not state.get("model_path"):
+                _render_screen("Select Sampler Preset", ["pick a model first."], summary=render_menu_summary(state))
+                input("\npress Enter to continue...")
+                continue
+            picked = _pick_sampler_preset(Path(state["model_path"]), state)
+            if picked:
+                state["sampler_preset"] = picked
         elif choice == 3:
-            if not state.get("model_path"):
-                print("  pick a model first.")
-                continue
-            state["sampler_preset"] = _pick_sampler_preset(Path(state["model_path"]))
-        elif choice == 4:
             _edit_sampler_values(state)
+        elif choice == 4:
+            _configure_benchmarks(state)
         elif choice == 5:
-            state["mode"] = _pick_benchmark_mode()
-            state["cache_types"] = _pick_cache_types()
-            state["quality_bench_ids"] = _pick_quality_packs()
-            state["skip_quality"] = not bool(state["quality_bench_ids"])
-            if state["mode"] == "agentic":
-                state["selected_workflow_ids"] = _prompt_workflow_selection(state["workflow_suite"])
-                session_benches = _prompt_session_benchmark_selection()
-                state["session_bench_ids"] = [bench["id"] for bench in session_benches] if session_benches else None
-            elif state["mode"] == "session":
-                session_benches = _prompt_session_benchmark_selection()
-                state["session_bench_ids"] = [bench["id"] for bench in session_benches] if session_benches else None
-            else:
-                state["selected_workflow_ids"] = None
-                state["session_bench_ids"] = None
-        elif choice == 6:
             saved = _save_preferences(state)
-            print(f"  saved {saved}")
-        elif choice == 7:
+            _render_screen("Save Preferences", [f"saved {saved}"], summary=render_menu_summary(state))
+            input("\npress Enter to continue...")
+        elif choice == 6:
             if not state.get("model_path"):
-                print("  select a model first.")
+                _render_screen("Run Benchmark", ["select a model first."], summary=render_menu_summary(state))
+                input("\npress Enter to continue...")
                 continue
-            print()
+            _clear_screen()
             print_splash()
             run_benchmark_from_menu_state(state)
             return
         else:
+            _clear_screen()
             return
 
 
