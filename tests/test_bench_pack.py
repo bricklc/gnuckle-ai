@@ -35,9 +35,12 @@ def base_manifest_dict() -> dict:
     return {
         "schema": 1,
         "id": "demo_pack",
+        "name": "Demo Pack",
         "version": "0.5.0",
         "gnuckle_min": "0.5.0",
         "author": {"name": "gnuckle-core", "contact": "https://example.com"},
+        "homepage": "https://example.com/demo-pack",
+        "downloads": 0,
         "description": "demo",
         "license": "MIT",
         "kind": "quality",
@@ -220,7 +223,17 @@ class BenchPackTests(unittest.TestCase):
         self.assertEqual(output["available"], [])
 
     def test_registry_update_and_local_index_roundtrip(self) -> None:
-        payload = json.dumps({"benchmarks": [{"id": "demo_pack", "description": "demo"}]}).encode("utf-8")
+        payload = json.dumps({
+            "benchmarks": [{
+                "id": "demo_pack",
+                "name": "Demo Pack",
+                "version": "0.5.0",
+                "author": "community-author",
+                "downloads": 12,
+                "homepage": "https://example.com/demo-pack",
+                "description": "demo"
+            }]
+        }).encode("utf-8")
 
         class FakeResponse:
             def __enter__(self):
@@ -235,6 +248,10 @@ class BenchPackTests(unittest.TestCase):
         with patch("gnuckle.bench_pack.registry.urlopen", return_value=FakeResponse()):
             entries = sync_registry("https://example.com/index.json")
         self.assertEqual(entries[0]["id"], "demo_pack")
+        self.assertEqual(entries[0]["name"], "Demo Pack")
+        self.assertEqual(entries[0]["author"], "community-author")
+        self.assertEqual(entries[0]["downloads"], 12)
+        self.assertEqual(entries[0]["homepage"], "https://example.com/demo-pack")
         self.assertTrue(lock_path().exists())
 
     def test_load_manifest_file_rejects_duplicate_keys(self) -> None:
@@ -249,9 +266,17 @@ class BenchPackTests(unittest.TestCase):
         entries = payload["benchmarks"]
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["id"], "wikitext2_ppl")
+        self.assertEqual(entries[0]["name"], "WikiText-2 Perplexity")
+        self.assertEqual(entries[0]["author"], "gnuckle-ai")
+        self.assertEqual(entries[0]["downloads"], 0)
+        self.assertEqual(entries[0]["homepage"], "https://github.com/bricklc/gnuckle-ai")
         manifest_path = Path("benchmark-index") / entries[0]["path"]
         manifest, _, _ = load_manifest_file(manifest_path)
         self.assertEqual(manifest.id, "wikitext2_ppl")
+        self.assertEqual(manifest.name, "WikiText-2 Perplexity")
+        self.assertEqual(manifest.author.name, "gnuckle-ai")
+        self.assertEqual(manifest.downloads, 0)
+        self.assertEqual(manifest.homepage, "https://github.com/bricklc/gnuckle-ai")
         self.assertEqual(manifest.binary, "llama-perplexity")
 
     def test_install_wikitext2_from_registry_entry_succeeds_on_clean_home(self) -> None:
@@ -266,8 +291,11 @@ class BenchPackTests(unittest.TestCase):
         manifest_dir.mkdir(parents=True, exist_ok=True)
         manifest = base_manifest_dict()
         manifest["id"] = "wikitext2_ppl"
+        manifest["name"] = "WikiText-2 Perplexity"
         manifest["version"] = "1.0.0"
         manifest["gnuckle_min"] = "0.6.0"
+        manifest["homepage"] = "https://github.com/bricklc/gnuckle-ai"
+        manifest["downloads"] = 0
         manifest["dataset"] = {
             "id": "wikitext-2-raw-v1",
             "url": "https://huggingface.co/datasets/ggml-org/ci/resolve/main/wikitext-2-raw-v1.zip",
@@ -281,7 +309,15 @@ class BenchPackTests(unittest.TestCase):
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         index_path = registry_root / "index.json"
         index_path.write_text(
-            json.dumps({"benchmarks": [{"id": "wikitext2_ppl", "path": "benchmarks/core/wikitext2_ppl/manifest.yaml"}]}, indent=2),
+            json.dumps({"benchmarks": [{
+                "id": "wikitext2_ppl",
+                "name": "WikiText-2 Perplexity",
+                "version": "1.0.0",
+                "author": "gnuckle-ai",
+                "downloads": 0,
+                "homepage": "https://github.com/bricklc/gnuckle-ai",
+                "path": "benchmarks/core/wikitext2_ppl/manifest.yaml"
+            }]}, indent=2),
             encoding="utf-8",
         )
 
@@ -302,8 +338,11 @@ class BenchPackTests(unittest.TestCase):
     def test_pack_runtime_wikitext2_output_feeds_visualizer_metrics(self) -> None:
         manifest = base_manifest_dict()
         manifest["id"] = "wikitext2_ppl"
+        manifest["name"] = "WikiText-2 Perplexity"
         manifest["version"] = "1.0.0"
         manifest["gnuckle_min"] = "0.6.0"
+        manifest["homepage"] = "https://github.com/bricklc/gnuckle-ai"
+        manifest["downloads"] = 0
         manifest["dataset"] = None
         manifest["parse"] = {"perplexity": {"pattern": r"\bPPL\s*=\s*([0-9]+\.[0-9]+)"}}
         manifest_path = self._write_manifest(manifest, "wikitext2_manifest.yaml")
@@ -330,13 +369,24 @@ class BenchPackTests(unittest.TestCase):
         self.assertEqual(results["wikitext2_ppl"]["perplexity"], 6.4321)
         self.assertEqual(metrics["wikitext2_perplexity"], 6.4321)
 
+    def test_manifest_and_registry_metadata_match_ckan_shape(self) -> None:
+        manifest = validate_manifest_dict(base_manifest_dict())
+        self.assertEqual(manifest.name, "Demo Pack")
+        self.assertEqual(manifest.version, "0.5.0")
+        self.assertEqual(manifest.author.name, "gnuckle-core")
+        self.assertEqual(manifest.downloads, 0)
+        self.assertEqual(manifest.homepage, "https://example.com/demo-pack")
+
     def test_run_full_benchmark_passes_pack_quality_results_into_legacy_output(self) -> None:
         from gnuckle.benchmark import run_full_benchmark
 
         manifest = base_manifest_dict()
         manifest["id"] = "wikitext2_ppl"
+        manifest["name"] = "WikiText-2 Perplexity"
         manifest["version"] = "1.0.0"
         manifest["gnuckle_min"] = "0.6.0"
+        manifest["homepage"] = "https://github.com/bricklc/gnuckle-ai"
+        manifest["downloads"] = 0
         manifest["dataset"] = None
         manifest["parse"] = {"perplexity": {"pattern": r"\bPPL\s*=\s*([0-9]+\.[0-9]+)"}}
         manifest_path = self._write_manifest(manifest, "run_manifest.yaml")

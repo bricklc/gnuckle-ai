@@ -1,11 +1,14 @@
 schema: 1
 id: wikitext2_ppl
+name: WikiText-2 Perplexity
 version: 1.0.0
 gnuckle_min: 0.6.0
 gnuckle_max: null
 author:
-  name: gnuckle-core
+  name: gnuckle-ai
   contact: https://github.com/bricklc/gnuckle-ai
+homepage: https://github.com/bricklc/gnuckle-ai
+downloads: 0
 description: >
   WikiText-2 perplexity benchmark using llama-perplexity as the first
   declarative canary benchmark pack.

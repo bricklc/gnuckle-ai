@@ -2,7 +2,11 @@
   "benchmarks": [
     {
       "id": "wikitext2_ppl",
+      "name": "WikiText-2 Perplexity",
       "version": "1.0.0",
+      "author": "gnuckle-ai",
+      "downloads": 0,
+      "homepage": "https://github.com/bricklc/gnuckle-ai",
       "path": "benchmarks/core/wikitext2_ppl/manifest.yaml",
       "description": "WikiText-2 perplexity through llama-perplexity",
       "tags": ["quality", "standard", "wikitext2"]

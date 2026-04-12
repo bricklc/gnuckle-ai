@@ -106,10 +106,13 @@ class ManifestModel(BaseModel):
 
     schema_version: int = Field(alias="schema")
     id: str
+    name: str
     version: str
     gnuckle_min: str
     gnuckle_max: str | None = None
     author: AuthorModel
+    homepage: str
+    downloads: int = 0
     description: str
     license: str
     kind: str
@@ -144,6 +147,21 @@ class ManifestModel(BaseModel):
             return value
         if not SEMVER_RE.fullmatch(value):
             raise ValueError("version fields must be semver")
+        return value
+
+    @field_validator("homepage")
+    @classmethod
+    def validate_homepage(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"https", "http"} or not parsed.netloc:
+            raise ValueError("homepage must be an absolute URL")
+        return value
+
+    @field_validator("downloads")
+    @classmethod
+    def validate_downloads(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("downloads must be >= 0")
         return value
 
     @field_validator("kind")
