@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from gnuckle.benchmark import (
     NON_SERVER_ARG_ALLOWLIST,
@@ -9,7 +12,12 @@ from gnuckle.benchmark import (
     parse_llama_bench_output,
     parse_llama_perplexity_output,
 )
-from gnuckle.visualize import build_session_comparison_html, extract_metrics
+from gnuckle.visualize import (
+    agentic_results_have_suite_data,
+    build_session_comparison_html,
+    extract_metrics,
+    run_visualize,
+)
 
 
 class VisualizeTests(unittest.TestCase):
@@ -151,6 +159,66 @@ class VisualizeTests(unittest.TestCase):
         self.assertIn("640,000", html)
         self.assertIn("600,000", html)
         self.assertIn("not the same thing as single-turn active context", html)
+
+    def test_agentic_results_have_suite_data_detects_empty_suite(self) -> None:
+        self.assertFalse(agentic_results_have_suite_data({"f16": {"workflow_results": [], "diagnostics": []}}))
+        self.assertTrue(agentic_results_have_suite_data({"f16": {"workflow_results": [{"workflow_id": "wf"}], "diagnostics": []}}))
+
+    def test_run_visualize_falls_back_to_session_when_agentic_suite_is_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "agentic_f16.json").write_text(
+                json.dumps(
+                    {
+                        "benchmark_mode": "agentic",
+                        "cache_label": "f16",
+                        "model_id": "demo.gguf",
+                        "workflow_suite": "benchmark",
+                        "generated_at": "2026-04-12T14:38:09",
+                        "diagnostics": [],
+                        "workflow_results": [],
+                        "summary": {"type": "Type 0", "grade": "F", "core_score": 0.0, "profile_score": None, "composite_score": 0.0, "usability_flags": []},
+                        "meta": {"quality_benchmarks": {}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "session_persistent_tool_stress_f16.json").write_text(
+                json.dumps(
+                    {
+                        "meta": {
+                            "type": "session",
+                            "benchmark_id": "persistent_tool_stress",
+                            "benchmark_title": "Persistent Tool Stress Test",
+                            "timestamp": "2026-04-12T14:38:09",
+                            "total_turns": 1,
+                            "quality_benchmarks": {},
+                        },
+                        "aggregate": {
+                            "average_score": 0.95,
+                            "pass_rate": 1.0,
+                            "pass_count": 1,
+                            "session_elapsed_s": 12.3,
+                            "provider_usage_total_tokens": 600,
+                            "format_obedience_rate": 1.0,
+                            "literal_semantic_gap_turn_count": 0,
+                            "unsupported_claim_count": 0,
+                            "recovery_try_count": 0,
+                            "peak_context_tokens_estimate": 120,
+                            "cumulative_context_tokens_estimate": 220,
+                            "final_hardware": {"vram_peak_mb": 2048},
+                        },
+                        "turns": [{"turn": 1, "turn_id": "t01", "scores": {"turn_score": 0.95}, "metrics": {"context_window": 4096, "provider_usage_cumulative_total": 600, "ttft_ms": 300, "hardware": {"vram_peak_mb": 2048}}}],
+                        "model_id": "demo.gguf",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            out_file = run_visualize(str(root))
+            self.assertEqual(out_file.name, "session_benchmark_dashboard.html")
+            html = out_file.read_text(encoding="utf-8")
+            self.assertIn("Persistent Tool Stress Test", html)
+            self.assertIn("Peak Ctx", html)
 
     def test_parse_llama_perplexity_output_extracts_final_ppl(self) -> None:
         raw = """

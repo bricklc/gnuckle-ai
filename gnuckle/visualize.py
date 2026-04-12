@@ -667,6 +667,13 @@ def load_agentic_results(results_dir: Path) -> dict[str, dict]:
     return by_cache
 
 
+def agentic_results_have_suite_data(by_cache: dict[str, dict]) -> bool:
+    for data in (by_cache or {}).values():
+        if data.get("workflow_results") or data.get("diagnostics"):
+            return True
+    return False
+
+
 def _session_cache_label_from_path(file_path: Path, benchmark_id: str | None) -> str:
     stem = file_path.stem
     prefix = f"session_{benchmark_id}_" if benchmark_id else "session_"
@@ -2662,6 +2669,16 @@ def run_visualize(results_dir: str):
     benchmark_mode = detect_benchmark_mode(results_path)
     if benchmark_mode == "agentic":
         agentic_by_cache = load_agentic_results(results_path)
+        session_by_cache = load_session_results(results_path)
+        if agentic_by_cache and not agentic_results_have_suite_data(agentic_by_cache) and session_by_cache:
+            print("  agentic suite summary is empty; ape show session benchmark results instead.")
+            benchmark_mode = "session"
+        else:
+            session_by_cache = {}
+    else:
+        session_by_cache = {}
+
+    if benchmark_mode == "agentic":
         if not agentic_by_cache:
             print(f"  no agentic benchmark JSONs in: {results_path}")
             print("  folder empty. ape no draw nothing. run benchmark first.")
@@ -2688,7 +2705,8 @@ def run_visualize(results_dir: str):
             html = build_agentic_html(first_data)
             out_file = results_path / "agentic_benchmark_dashboard.html"
     elif benchmark_mode == "session":
-        session_by_cache = load_session_results(results_path)
+        if not session_by_cache:
+            session_by_cache = load_session_results(results_path)
         if not session_by_cache:
             print(f"  no session benchmark JSONs in: {results_path}")
             print("  folder empty. ape no draw nothing. run benchmark first.")
