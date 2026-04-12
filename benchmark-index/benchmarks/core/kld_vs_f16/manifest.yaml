@@ -1,0 +1,82 @@
+schema: 1
+id: kld_vs_f16
+name: KLD vs f16
+version: 1.0.0
+gnuckle_min: 0.7.0
+gnuckle_max: null
+author:
+  name: gnuckle-ai
+  contact: https://github.com/bricklc/gnuckle-ai
+homepage: https://github.com/bricklc/gnuckle-ai
+downloads: 0
+description: >
+  Kullback-Leibler divergence between a quantized KV cache and the f16
+  baseline, using llama-perplexity in a two-stage baseline/compare flow.
+license: MIT
+kind: quality
+tags: [quality, standard, kld, kv-cache]
+binary: llama-perplexity
+dataset:
+  id: wikitext-2-raw-v1
+  url: https://huggingface.co/datasets/ggml-org/ci/resolve/main/wikitext-2-raw-v1.zip
+  sha256: ef7edb566e3e2b2d31b29c1fdb0c89a4cc683597484c3dc2517919c615435a11
+  size_bytes_max: 5242880
+  archive: zip
+  extract: wikitext-2-raw/wiki.test.raw
+requires_baseline: f16
+stages:
+  - id: save_baseline
+    when: cache_label == "f16"
+    args_template:
+      - -m
+      - "{model_path}"
+      - -f
+      - "{dataset_path}"
+      - --kl-divergence-base
+      - "{logits_out}"
+      - --ctx-size
+      - "512"
+      - -ngl
+      - "99"
+  - id: compare
+    when: cache_label != "f16"
+    args_template:
+      - -m
+      - "{model_path}"
+      - -f
+      - "{dataset_path}"
+      - --kl-divergence
+      - --kl-divergence-base
+      - "{logits_in}"
+      - --ctx-size
+      - "512"
+      - -ngl
+      - "99"
+      - --cache-type-k
+      - "{cache_k}"
+      - --cache-type-v
+      - "{cache_v}"
+parse:
+  mean_kld:
+    pattern: 'Mean KLD:\s+([0-9]+(?:\.[0-9]+)?)'
+    unit: kld
+  p99_kld:
+    pattern: 'KLD 99%:\s+([0-9]+(?:\.[0-9]+)?)'
+    unit: kld
+  top1_agreement_pct:
+    pattern: 'Top-1 match:\s+([0-9]+(?:\.[0-9]+)?)%'
+    unit: pct
+  top5_agreement_pct:
+    pattern: 'Top-5 match:\s+([0-9]+(?:\.[0-9]+)?)%'
+    unit: pct
+report:
+  column_label: KLD vs f16
+  primary_metric: mean_kld
+  delta_vs_baseline: none
+  tier_thresholds:
+    lossless: 0.001
+    excellent: 0.01
+    good: 0.05
+    usable: 0.15
+  sort: ascending
+timeout_seconds: 1800

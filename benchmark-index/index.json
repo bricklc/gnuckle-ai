@@ -10,6 +10,28 @@
       "path": "benchmarks/core/wikitext2_ppl/manifest.yaml",
       "description": "WikiText-2 perplexity through llama-perplexity",
       "tags": ["quality", "standard", "wikitext2"]
+    },
+    {
+      "id": "kld_vs_f16",
+      "name": "KLD vs f16",
+      "version": "1.0.0",
+      "author": "gnuckle-ai",
+      "downloads": 0,
+      "homepage": "https://github.com/bricklc/gnuckle-ai",
+      "path": "benchmarks/core/kld_vs_f16/manifest.yaml",
+      "description": "KL divergence against the f16 KV-cache baseline",
+      "tags": ["quality", "standard", "kld", "kv-cache"]
+    },
+    {
+      "id": "hellaswag",
+      "name": "HellaSwag Accuracy",
+      "version": "1.0.0",
+      "author": "gnuckle-ai",
+      "downloads": 0,
+      "homepage": "https://github.com/bricklc/gnuckle-ai",
+      "path": "benchmarks/core/hellaswag/manifest.yaml",
+      "description": "HellaSwag commonsense accuracy via llama-perplexity",
+      "tags": ["quality", "hellaswag", "commonsense"]
     }
   ]
 }

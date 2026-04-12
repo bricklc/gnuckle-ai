@@ -137,7 +137,7 @@ tr:last-child td { border-bottom: none; }
 <body>
 <div class="dash">
   <div class="header">
-    <h1>TurboQuant benchmark dashboard</h1>
+    <h1>TurboQuant benchmark dashboard $quality_tier_badge</h1>
     <div class="sub">$model_name &middot; $timestamp &middot; $num_turns turns per cache type &middot; $num_cache_types cache types &middot; $system_prompt_summary</div>
   </div>
 
@@ -219,6 +219,9 @@ $acc_legend
           <th>Prompt (t/s)</th>
           <th>Gen (t/s)</th>
           <th>PPL WT2</th>
+          <th>KLD vs f16</th>
+          <th>HellaSwag</th>
+          <th>Quality tier</th>
           <th>Gen tok/s (t1)</th>
           <th>Gen tok/s ($num_turns)</th>
           <th>Degradation</th>
@@ -716,6 +719,9 @@ def extract_metrics(data):
     if legacy_quality and "wikitext2_ppl" not in quality_benchmarks:
         quality_benchmarks = {**quality_benchmarks, "wikitext2_ppl": legacy_quality}
     wikitext2_metrics = quality_benchmarks.get("wikitext2_ppl", {}) or {}
+    kld_metrics = quality_benchmarks.get("kld_vs_f16", {}) or {}
+    hellaswag_metrics = quality_benchmarks.get("hellaswag", {}) or {}
+    quality_tier = quality_benchmarks.get("quality_tier")
     tps_list = [t.get("tps", 0) for t in turns if t.get("tps", 0) > 0]
     ttft_list = [t.get("ttft_ms") for t in turns if t.get("ttft_ms") is not None]
     acc_list = [t.get("tool_accuracy_pct") for t in turns if t.get("tool_accuracy_pct") is not None]
@@ -735,7 +741,16 @@ def extract_metrics(data):
         "gen_tps_bench": throughput_benchmark.get("generation_tokens_per_second"),
         "throughput_available": bool(throughput_benchmark.get("available")),
         "wikitext2_perplexity": wikitext2_metrics.get("perplexity"),
+        "wikitext2_delta_vs_baseline": wikitext2_metrics.get("delta_vs_baseline"),
         "quality_available": bool(wikitext2_metrics.get("available")),
+        "kld_mean": kld_metrics.get("mean_kld"),
+        "kld_p99": kld_metrics.get("p99_kld"),
+        "kld_top1": kld_metrics.get("top1_agreement_pct"),
+        "kld_top5": kld_metrics.get("top5_agreement_pct"),
+        "kld_delta_vs_baseline": kld_metrics.get("delta_vs_baseline"),
+        "hellaswag_accuracy": hellaswag_metrics.get("value"),
+        "hellaswag_delta_vs_baseline": hellaswag_metrics.get("delta_vs_baseline"),
+        "quality_tier": quality_tier,
         "tps_t1": round(t1_tps, 2),
         "tps_tn": round(tn_tps, 2),
         "tps_all": [round(v, 2) for v in tps_list],
@@ -791,6 +806,12 @@ def format_delta(value, digits=3):
         return "n/a"
     sign = "+" if value > 0 else ""
     return f"{sign}{value:.{digits}f}"
+
+
+def format_relative_delta(value, digits=1):
+    if value is None:
+        return "n/a"
+    return format_pct(value * 100, digits)
 
 
 def delta_class(value):
@@ -974,6 +995,7 @@ def build_html(by_cache, model_name, timestamp, system_prompt_summary="system pr
     else:
         speed_compare = hero
     speed_compare_m = metrics.get(speed_compare, hero_m)
+    tier_badge = f"<span class='tq-badge'>{escape(str(hero_m['quality_tier']).title())}</span>" if hero_m.get("quality_tier") else ""
 
     metric_cards = "\n".join(
         [
@@ -1010,7 +1032,17 @@ def build_html(by_cache, model_name, timestamp, system_prompt_summary="system pr
             f"""    <div class="mcard">
       <div class="val">{format_num(hero_m["wikitext2_perplexity"], 3) if hero_m["wikitext2_perplexity"] is not None else 'n/a'}</div>
       <div class="lbl">PPL WT2</div>
-      <div class="sub {'good' if hero_m['wikitext2_perplexity'] is not None else 'warn'}">familiar WikiText-2 quality anchor</div>
+      <div class="sub {'good' if hero_m['wikitext2_perplexity'] is not None else 'warn'}">vs {format_relative_delta(hero_m["wikitext2_delta_vs_baseline"])} {escape(baseline)}</div>
+    </div>""",
+            f"""    <div class="mcard">
+      <div class="val">{format_num(hero_m["kld_mean"], 4) if hero_m["kld_mean"] is not None else 'n/a'}</div>
+      <div class="lbl">KLD vs f16</div>
+      <div class="sub {'good' if hero_m['kld_mean'] is not None else 'warn'}">p99 {format_num(hero_m["kld_p99"], 4) if hero_m["kld_p99"] is not None else 'n/a'} · top1 {format_pct(hero_m["kld_top1"], 1) if hero_m["kld_top1"] is not None else 'n/a'}</div>
+    </div>""",
+            f"""    <div class="mcard">
+      <div class="val">{format_num(hero_m["hellaswag_accuracy"], 1) if hero_m["hellaswag_accuracy"] is not None else 'n/a'}</div>
+      <div class="lbl">HellaSwag</div>
+      <div class="sub {'good' if hero_m['hellaswag_accuracy'] is not None else 'warn'}">vs {format_relative_delta(hero_m["hellaswag_delta_vs_baseline"])} {escape(baseline)}</div>
     </div>""",
             f"""    <div class="mcard">
       <div class="val">{format_pct(hero_m["acc_avg"])}</div>
@@ -1072,7 +1104,10 @@ def build_html(by_cache, model_name, timestamp, system_prompt_summary="system pr
           <td>{emphasis[0]}{(format_num(float(cache_compression(cache)), 1) + '&times;') if cache_compression(cache) != 'n/a' else 'n/a'}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["prompt_tps_bench"]) if m["prompt_tps_bench"] is not None else 'n/a'}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["gen_tps_bench"]) if m["gen_tps_bench"] is not None else 'n/a'}{emphasis[1]}</td>
-          <td>{emphasis[0]}{format_num(m["wikitext2_perplexity"], 3) if m["wikitext2_perplexity"] is not None else 'n/a'}{emphasis[1]}</td>
+          <td>{emphasis[0]}{format_num(m["wikitext2_perplexity"], 3) if m["wikitext2_perplexity"] is not None else 'n/a'} <span class="delta">{format_relative_delta(m["wikitext2_delta_vs_baseline"])}</span>{emphasis[1]}</td>
+          <td>{emphasis[0]}{format_num(m["kld_mean"], 4) if m["kld_mean"] is not None else 'n/a'}{emphasis[1]}</td>
+          <td>{emphasis[0]}{format_num(m["hellaswag_accuracy"], 1) if m["hellaswag_accuracy"] is not None else 'n/a'} <span class="delta">{format_relative_delta(m["hellaswag_delta_vs_baseline"])}</span>{emphasis[1]}</td>
+          <td>{emphasis[0]}{escape(str(m["quality_tier"]).title()) if m["quality_tier"] else 'n/a'}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["tps_t1"])}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["tps_tn"])}{emphasis[1]}</td>
           <td class="{deg_class(m['degradation'])}">{emphasis[0]}{format_pct(m["degradation"])}{emphasis[1]}</td>
@@ -1105,6 +1140,7 @@ def build_html(by_cache, model_name, timestamp, system_prompt_summary="system pr
         num_turns=num_turns,
         num_cache_types=len(ordered),
         metric_cards=metric_cards,
+        quality_tier_badge=tier_badge,
         degrad_legend=degrad_legend,
         vram_legend=vram_legend,
         ttft_legend=ttft_legend,
@@ -2053,6 +2089,7 @@ def build_agentic_comparison_html_modern(by_cache: dict[str, dict]) -> str:
     best_score = float(suite_summaries[best_cache].get("composite_score", 0) or 0)
     baseline_score = float(baseline_summary.get("composite_score", 0) or 0)
     turbo3_delta = None
+    best_quality_tier = (((by_cache.get(best_cache, {}).get("meta", {}) or {}).get("quality_benchmarks", {}) or {}).get("quality_tier"))
     if "turbo3" in suite_summaries:
         turbo3_delta = float(suite_summaries["turbo3"].get("composite_score", 0) or 0) - baseline_score
     grade_line = " | ".join(f"{cache}:{suite_summaries[cache].get('grade', 'n/a')}" for cache in ordered)
@@ -2134,10 +2171,10 @@ tr:last-child td {{ border-bottom: none; }}
   <section class="hero">
     <div class="eyebrow">Agentic benchmark comparison</div>
     <h1>{workflow_suite}: f16 through turbo3</h1>
-    <div class="sub">{model_name} &middot; {escape(timestamp)} &middot; baseline {escape(baseline)} &middot; {len(ordered)} cache variants</div>
+    <div class="sub">{model_name} &middot; {escape(timestamp)} &middot; baseline {escape(baseline)} &middot; {len(ordered)} cache variants{f" &middot; tier {escape(str(best_quality_tier).title())}" if best_quality_tier else ""}</div>
     <div class="hero-grid">
       <div class="hero-card"><div class="val">{escape(best_cache)} at {format_num(best_score, 3)}</div><div class="lbl">Best composite score</div></div>
-      <div class="hero-card"><div class="val">{format_delta(turbo3_delta) if turbo3_delta is not None else 'n/a'}</div><div class="lbl">Turbo3 delta vs {escape(baseline)}</div></div>
+      <div class="hero-card"><div class="val">{escape(str(best_quality_tier).title()) if best_quality_tier else (format_delta(turbo3_delta) if turbo3_delta is not None else 'n/a')}</div><div class="lbl">{'Quality tier' if best_quality_tier else f'Turbo3 delta vs {escape(baseline)}'}</div></div>
     </div>
   </section>
   <section class="stats-grid">
@@ -2294,7 +2331,11 @@ def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
         legacy_quality = meta_block.get("quality_benchmark")
         if legacy_quality and "wikitext2_ppl" not in quality_benchmarks:
             quality_benchmarks = {**quality_benchmarks, "wikitext2_ppl": legacy_quality}
-        wikitext2_perplexity = (quality_benchmarks.get("wikitext2_ppl") or {}).get("perplexity")
+        wikitext2_metrics = quality_benchmarks.get("wikitext2_ppl") or {}
+        kld_metrics = quality_benchmarks.get("kld_vs_f16") or {}
+        hellaswag_metrics = quality_benchmarks.get("hellaswag") or {}
+        wikitext2_perplexity = wikitext2_metrics.get("perplexity")
+        quality_tier = quality_benchmarks.get("quality_tier")
         provider_total_tokens = int(summary.get("provider_usage_total_tokens", 0) or 0)
         peak_context_tokens = int(
             summary.get("peak_context_tokens_measured")
@@ -2327,7 +2368,12 @@ def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
             f"<td>{format_pct(pass_rate * 100, 1)}</td>"
             f"<td>{int(summary.get('pass_count', 0) or 0)}/{int(meta.get('total_turns', 0) or len(turn_labels))}</td>"
             f"<td>{format_num(elapsed, 1)}</td>"
-            f"<td>{format_num(wikitext2_perplexity, 3) if wikitext2_perplexity is not None else 'n/a'}</td>"
+            f"<td>{format_num(wikitext2_perplexity, 3) if wikitext2_perplexity is not None else 'n/a'}"
+            f"<div class='delta'>{format_relative_delta(wikitext2_metrics.get('delta_vs_baseline'))}</div></td>"
+            f"<td>{format_num(kld_metrics.get('mean_kld'), 4) if kld_metrics.get('mean_kld') is not None else 'n/a'}</td>"
+            f"<td>{format_num(hellaswag_metrics.get('value'), 1) if hellaswag_metrics.get('value') is not None else 'n/a'}"
+            f"<div class='delta'>{format_relative_delta(hellaswag_metrics.get('delta_vs_baseline'))}</div></td>"
+            f"<td>{escape(str(quality_tier).title()) if quality_tier else 'n/a'}</td>"
             f"<td>{peak_context_label}</td>"
             f"<td>{format_num(cumulative_context_tokens, 0)}</td>"
             f"<td>{format_num(provider_total_tokens, 0)}</td>"
@@ -2486,7 +2532,7 @@ td.delta-down {{ background: rgba(180,35,24,0.06); }}
   <section class="hero">
     <div class="eyebrow">Session benchmark comparison</div>
     <h1>{benchmark_title}</h1>
-    <div class="sub">{model_name} &middot; {escape(timestamp)} &middot; benchmark {escape(benchmark_id)} &middot; baseline {escape(baseline)}</div>
+    <div class="sub">{model_name} &middot; {escape(timestamp)} &middot; benchmark {escape(benchmark_id)} &middot; baseline {escape(baseline)}{f" &middot; tier {escape(str((by_cache.get(best_cache, {}).get('meta', {}) or {}).get('quality_benchmarks', {}).get('quality_tier', '')).title())}" if (by_cache.get(best_cache, {}).get('meta', {}) or {}).get('quality_benchmarks', {}).get('quality_tier') else ''}</div>
   </section>
   <section class="stats-grid">
     <div class="card"><div class="val">{escape(best_cache)}</div><div class="lbl">Best cache</div><div class="sub">Highest average session score across compared quants.</div></div>
@@ -2497,9 +2543,9 @@ td.delta-down {{ background: rgba(180,35,24,0.06); }}
   <section class="panel-grid">
     <div class="panel">
       <h2 class="section-title">Cache leaderboard</h2>
-      <p class="section-sub">Session score, pass rate, elapsed time, WikiText-2 perplexity, peak active context, cumulative context load, cumulative provider tokens, formatting obedience, semantic-gap count, unsupported claims, recovery tries, and VRAM peak by quant.</p>
+      <p class="section-sub">Session score, pass rate, elapsed time, standard quality packs, peak active context, cumulative context load, cumulative provider tokens, formatting obedience, semantic-gap count, unsupported claims, recovery tries, and VRAM peak by quant.</p>
       <table>
-        <tr><th>Cache</th><th>Avg score</th><th>Pass rate</th><th>Passes</th><th>Time (s)</th><th>PPL WT2</th><th>Peak Ctx</th><th>Total Ctx</th><th>Provider tokens</th><th>Fmt obey</th><th>Lit→Sem gaps</th><th>Unsupported</th><th>Recovery tries</th><th>VRAM peak</th><th>Delta vs {escape(baseline)}</th></tr>
+        <tr><th>Cache</th><th>Avg score</th><th>Pass rate</th><th>Passes</th><th>Time (s)</th><th>PPL WT2</th><th>KLD vs f16</th><th>HellaSwag</th><th>Tier</th><th>Peak Ctx</th><th>Total Ctx</th><th>Provider tokens</th><th>Fmt obey</th><th>Lit→Sem gaps</th><th>Unsupported</th><th>Recovery tries</th><th>VRAM peak</th><th>Delta vs {escape(baseline)}</th></tr>
         {''.join(table_rows)}
       </table>
     </div>

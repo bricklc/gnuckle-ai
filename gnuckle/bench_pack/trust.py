@@ -26,6 +26,7 @@ ALLOWED_PLACEHOLDERS = frozenset({
     "dataset_path",
     "logits_in",
     "logits_out",
+    "baseline_path",
     "cache_k",
     "cache_v",
     "cache_label",

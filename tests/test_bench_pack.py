@@ -18,6 +18,7 @@ from gnuckle.bench_pack.manifest import load_manifest_file
 from gnuckle.bench_pack.parser import parse_metrics
 from gnuckle.bench_pack.registry import save_local_index, sync_registry
 from gnuckle.bench_pack.schema import validate_manifest_dict
+from gnuckle.benchmark import annotate_quality_benchmarks, resolve_quality_bench_ids
 from gnuckle.bench_pack.trust import (
     INSTALL_DISCLAIMER,
     append_audit_log,
@@ -260,24 +261,20 @@ class BenchPackTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             load_manifest_file(path)
 
-    def test_bundled_registry_has_exactly_one_wikitext2_canary_manifest(self) -> None:
+    def test_bundled_registry_has_standard_quality_seed_manifests(self) -> None:
         index_path = Path("benchmark-index") / "index.json"
         payload = json.loads(index_path.read_text(encoding="utf-8"))
         entries = payload["benchmarks"]
-        self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0]["id"], "wikitext2_ppl")
-        self.assertEqual(entries[0]["name"], "WikiText-2 Perplexity")
-        self.assertEqual(entries[0]["author"], "gnuckle-ai")
-        self.assertEqual(entries[0]["downloads"], 0)
-        self.assertEqual(entries[0]["homepage"], "https://github.com/bricklc/gnuckle-ai")
-        manifest_path = Path("benchmark-index") / entries[0]["path"]
-        manifest, _, _ = load_manifest_file(manifest_path)
-        self.assertEqual(manifest.id, "wikitext2_ppl")
-        self.assertEqual(manifest.name, "WikiText-2 Perplexity")
-        self.assertEqual(manifest.author.name, "gnuckle-ai")
-        self.assertEqual(manifest.downloads, 0)
-        self.assertEqual(manifest.homepage, "https://github.com/bricklc/gnuckle-ai")
-        self.assertEqual(manifest.binary, "llama-perplexity")
+        self.assertEqual([entry["id"] for entry in entries], ["wikitext2_ppl", "kld_vs_f16", "hellaswag"])
+        for entry in entries:
+            self.assertEqual(entry["author"], "gnuckle-ai")
+            self.assertEqual(entry["downloads"], 0)
+            self.assertEqual(entry["homepage"], "https://github.com/bricklc/gnuckle-ai")
+            manifest_path = Path("benchmark-index") / entry["path"]
+            manifest, _, _ = load_manifest_file(manifest_path)
+            self.assertEqual(manifest.id, entry["id"])
+            self.assertEqual(manifest.author.name, "gnuckle-ai")
+            self.assertEqual(manifest.binary, "llama-perplexity")
 
     def test_install_wikitext2_from_registry_entry_succeeds_on_clean_home(self) -> None:
         dataset_bytes = io.BytesIO()
@@ -369,6 +366,67 @@ class BenchPackTests(unittest.TestCase):
         self.assertEqual(results["wikitext2_ppl"]["perplexity"], 6.4321)
         self.assertEqual(metrics["wikitext2_perplexity"], 6.4321)
 
+    def test_pack_runtime_kld_uses_f16_baseline_then_compares_other_cache(self) -> None:
+        manifest = base_manifest_dict()
+        manifest["id"] = "kld_vs_f16"
+        manifest["name"] = "KLD vs f16"
+        manifest["version"] = "1.0.0"
+        manifest["gnuckle_min"] = "0.7.0"
+        manifest["homepage"] = "https://github.com/bricklc/gnuckle-ai"
+        manifest["downloads"] = 0
+        manifest["requires_baseline"] = "f16"
+        manifest["dataset"] = None
+        manifest["stages"] = [
+            {"id": "save_baseline", "when": 'cache_label == "f16"', "args_template": ["--kl-divergence-base", "{logits_out}"]},
+            {"id": "compare", "when": 'cache_label != "f16"', "args_template": ["--kl-divergence", "--kl-divergence-base", "{logits_in}"]},
+        ]
+        manifest["parse"] = {
+            "mean_kld": {"pattern": r"Mean KLD:\s+([0-9]+\.[0-9]+)"},
+            "p99_kld": {"pattern": r"KLD 99%:\s+([0-9]+\.[0-9]+)"},
+            "top1_agreement_pct": {"pattern": r"Top-1 match:\s+([0-9]+\.[0-9]+)%"},
+            "top5_agreement_pct": {"pattern": r"Top-5 match:\s+([0-9]+\.[0-9]+)%"},
+        }
+        manifest["report"] = {"column_label": "KLD vs f16", "primary_metric": "mean_kld", "delta_vs_baseline": "none", "sort": "ascending"}
+        manifest_path = self._write_manifest(manifest, "kld_manifest.yaml")
+        install_pack(str(manifest_path), assume_yes=True)
+
+        from gnuckle.bench_pack.runner import run_quality_packs
+
+        model_path = Path(self.tmpdir.name) / "model.gguf"
+        model_path.write_text("gguf", encoding="utf-8")
+
+        with patch("gnuckle.bench_pack.runner._resolve_binary", return_value=Path("llama-perplexity")), patch(
+            "gnuckle.bench_pack.runner.subprocess.run",
+            side_effect=[
+                SimpleNamespace(returncode=0, stdout="", stderr=""),
+                SimpleNamespace(returncode=0, stdout="Mean KLD: 0.0082\nKLD 99%: 0.041\nTop-1 match: 97.8%\nTop-5 match: 99.6%", stderr=""),
+            ],
+        ):
+            baseline = run_quality_packs(
+                ["kld_vs_f16"],
+                server_path=None,
+                model_path=model_path,
+                cache_label="f16",
+                cache_k="f16",
+                cache_v="f16",
+            )
+            compared = run_quality_packs(
+                ["kld_vs_f16"],
+                server_path=None,
+                model_path=model_path,
+                cache_label="q8_0",
+                cache_k="q8_0",
+                cache_v="q8_0",
+            )
+
+        annotated_baseline = annotate_quality_benchmarks(baseline, None)
+        annotated_compared = annotate_quality_benchmarks(compared, annotated_baseline)
+        self.assertEqual(annotated_baseline["kld_vs_f16"]["mean_kld"], 0.0)
+        self.assertEqual(annotated_baseline["quality_tier"], "lossless")
+        self.assertEqual(annotated_compared["kld_vs_f16"]["mean_kld"], 0.0082)
+        self.assertEqual(annotated_compared["kld_vs_f16"]["delta_vs_baseline"], 0.0082)
+        self.assertEqual(annotated_compared["quality_tier"], "excellent")
+
     def test_manifest_and_registry_metadata_match_ckan_shape(self) -> None:
         manifest = validate_manifest_dict(base_manifest_dict())
         self.assertEqual(manifest.name, "Demo Pack")
@@ -445,6 +503,13 @@ class BenchPackTests(unittest.TestCase):
         self.assertEqual(captured["quality_benchmarks"]["wikitext2_ppl"]["perplexity"], 6.1)
         metrics = extract_metrics(json.loads(captured["paths"]["f16"].read_text(encoding="utf-8")))
         self.assertEqual(metrics["wikitext2_perplexity"], 6.1)
+
+    def test_standard_quality_shortcut_resolves_to_ppl_and_kld(self) -> None:
+        installed = ["wikitext2_ppl", "kld_vs_f16", "hellaswag"]
+        self.assertEqual(resolve_quality_bench_ids(None, installed), ["wikitext2_ppl", "kld_vs_f16"])
+        self.assertEqual(resolve_quality_bench_ids(["standard"], installed), ["wikitext2_ppl", "kld_vs_f16"])
+        self.assertEqual(resolve_quality_bench_ids(["full"], installed), ["wikitext2_ppl", "kld_vs_f16", "hellaswag"])
+        self.assertEqual(resolve_quality_bench_ids(["all"], installed), installed)
 
     def test_hardcoded_collect_llama_perplexity_metrics_is_removed(self) -> None:
         source = Path("gnuckle") / "benchmark.py"

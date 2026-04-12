@@ -1131,6 +1131,96 @@ def get_cache_configs(cache_labels=None):
     wanted = {label.lower() for label in cache_labels}
     return [cfg for cfg in CACHE_CONFIGS if cfg["label"].lower() in wanted]
 
+
+QUALITY_BENCH_STANDARD = ["wikitext2_ppl", "kld_vs_f16"]
+QUALITY_BENCH_FULL = ["wikitext2_ppl", "kld_vs_f16", "hellaswag"]
+
+
+def _quality_primary_metric(bench_id: str, metrics: dict) -> str | None:
+    primary = metrics.get("primary_metric")
+    if primary:
+        return primary
+    fallbacks = {
+        "wikitext2_ppl": "perplexity",
+        "kld_vs_f16": "mean_kld",
+        "hellaswag": "value",
+    }
+    return fallbacks.get(bench_id)
+
+
+def _quality_delta_value(current, baseline, mode: str | None):
+    if current is None or baseline is None:
+        return None
+    if mode == "none":
+        return round(float(current) - float(baseline), 6)
+    if baseline == 0:
+        return round(float(current) - float(baseline), 6)
+    if mode in {None, "", "relative"}:
+        return round((float(current) - float(baseline)) / float(baseline), 6)
+    return round(float(current) - float(baseline), 6)
+
+
+def _quality_tier_for(mean_kld):
+    if mean_kld is None:
+        return None
+    value = float(mean_kld)
+    if value < 0.001:
+        return "lossless"
+    if value < 0.01:
+        return "excellent"
+    if value < 0.05:
+        return "good"
+    if value < 0.15:
+        return "usable"
+    return "degraded"
+
+
+def resolve_quality_bench_ids(quality_bench_ids, installed_ids: list[str]) -> list[str]:
+    requested = list(quality_bench_ids or ["standard"])
+    resolved = []
+    for item in requested:
+        token = str(item or "").strip().lower()
+        if not token:
+            continue
+        if token == "standard":
+            resolved.extend(QUALITY_BENCH_STANDARD)
+        elif token == "full":
+            resolved.extend(QUALITY_BENCH_FULL)
+        elif token == "all":
+            resolved.extend(installed_ids)
+        else:
+            resolved.append(item)
+    seen = set()
+    return [pack_id for pack_id in resolved if pack_id in installed_ids and not (pack_id in seen or seen.add(pack_id))]
+
+
+def annotate_quality_benchmarks(current: dict, baseline: dict | None) -> dict:
+    baseline = baseline or {}
+    annotated = {}
+    for bench_id, metrics in (current or {}).items():
+        if not isinstance(metrics, dict):
+            annotated[bench_id] = metrics
+            continue
+        enriched = dict(metrics)
+        primary_metric = _quality_primary_metric(bench_id, enriched)
+        baseline_metrics = baseline.get(bench_id) if isinstance(baseline.get(bench_id), dict) else {}
+        baseline_value = baseline_metrics.get(primary_metric) if primary_metric else None
+        current_value = enriched.get(primary_metric) if primary_metric else None
+        enriched["baseline_value"] = baseline_value if baseline_value is not None else (0.0 if bench_id == "kld_vs_f16" else None)
+        enriched["delta_vs_baseline"] = _quality_delta_value(
+            current_value,
+            enriched["baseline_value"],
+            enriched.get("delta_mode"),
+        )
+        annotated[bench_id] = enriched
+
+    kld_metrics = annotated.get("kld_vs_f16")
+    if isinstance(kld_metrics, dict) and kld_metrics.get("available"):
+        tier = _quality_tier_for(kld_metrics.get("mean_kld"))
+        if tier:
+            annotated["quality_tier"] = tier
+    return annotated
+
 def build_llama_args(arg_map):
     args = []
     for key, value in arg_map.items():
@@ -2684,6 +2774,10 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
     num_turns = num_turns if num_turns is not None else DEFAULT_TURNS
     port = port if port is not None else DEFAULT_PORT
     base_output_path = Path(output_dir) if output_dir else Path.cwd() / "benchmark_results"
+    installed_quality_ids = [
+        path.name for path in sorted(benchmarks_dir().iterdir())
+        if path.is_dir()
+    ] if benchmarks_dir().exists() else []
 
     if model_path:
         model_path = Path(model_path)
@@ -2756,6 +2850,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
 
     output_files = []
     server_proc  = None
+    baseline_quality_benchmarks = None
     benchmark_started = time.perf_counter()
 
     try:
@@ -2817,16 +2912,11 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
             if skip_quality:
                 print_step("quality benchmarks skipped (--skip-quality)")
             else:
-                selected_quality_ids = list(quality_bench_ids or [])
-                if not selected_quality_ids:
-                    selected_quality_ids = [
-                        path.name for path in sorted(benchmarks_dir().iterdir())
-                        if path.is_dir()
-                    ] if benchmarks_dir().exists() else []
+                selected_quality_ids = resolve_quality_bench_ids(quality_bench_ids, installed_quality_ids)
             if not skip_quality and selected_quality_ids:
                 from gnuckle.bench_pack.runner import run_quality_packs
 
-                quality_benchmarks = run_quality_packs(
+                quality_benchmarks = annotate_quality_benchmarks(run_quality_packs(
                     selected_quality_ids,
                     server_path=server_path,
                     model_path=model_path,
@@ -2834,15 +2924,20 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                     cache_k=cache_k,
                     cache_v=cache_v,
                     split_config=split_config,
-                )
+                ), baseline_quality_benchmarks)
+                if label == "f16":
+                    baseline_quality_benchmarks = quality_benchmarks
                 if not quality_benchmarks:
                     print_step("no installed quality packs matched --quality-bench selection")
                 else:
                     for bench_id, metrics in quality_benchmarks.items():
+                        if bench_id == "quality_tier":
+                            print_step(f"quality tier: {metrics}")
+                            continue
                         if metrics.get("available"):
                             summary_bits = []
                             for key, value in metrics.items():
-                                if key in {"available", "binary", "capture_truncated"}:
+                                if key in {"available", "binary", "capture_truncated", "tier_thresholds", "column_label", "primary_metric", "delta_mode", "pack_version"}:
                                     continue
                                 summary_bits.append(f"{key}={value}")
                             summary = ", ".join(summary_bits) if summary_bits else "ok"
@@ -2850,7 +2945,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                         else:
                             print_step(f"{bench_id} unavailable (continuing without quality snapshot): {metrics.get('error', 'unknown error')}")
             elif not skip_quality:
-                print_step("no installed quality benchmark packs found (run `gnuckle bench update` then `gnuckle bench install wikitext2_ppl`)")
+                print_step("no installed quality benchmark packs found (run `gnuckle bench update` then `gnuckle bench install wikitext2_ppl kld_vs_f16`)")
 
             out = None
             try:

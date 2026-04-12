@@ -1,0 +1,51 @@
+schema: 1
+id: hellaswag
+name: HellaSwag Accuracy
+version: 1.0.0
+gnuckle_min: 0.7.0
+gnuckle_max: null
+author:
+  name: gnuckle-ai
+  contact: https://github.com/bricklc/gnuckle-ai
+homepage: https://github.com/bricklc/gnuckle-ai
+downloads: 0
+description: >
+  HellaSwag commonsense accuracy using llama-perplexity with the 400-task
+  convention from llama.cpp.
+license: MIT
+kind: quality
+tags: [quality, hellaswag, commonsense]
+binary: llama-perplexity
+dataset:
+  id: hellaswag
+  url: https://huggingface.co/datasets/ggml-org/ci/resolve/main/hellaswag_val_full.txt
+  sha256: "1111111111111111111111111111111111111111111111111111111111111111"
+  size_bytes_max: 10485760
+  archive: null
+  extract: hellaswag_val_full.txt
+stages:
+  - id: run
+    args_template:
+      - -m
+      - "{model_path}"
+      - -f
+      - "{dataset_path}"
+      - --hellaswag
+      - --hellaswag-tasks
+      - "400"
+      - -ngl
+      - "99"
+      - --cache-type-k
+      - "{cache_k}"
+      - --cache-type-v
+      - "{cache_v}"
+parse:
+  value:
+    pattern: 'HellaSwag accuracy:\s+([0-9]+(?:\.[0-9]+)?)'
+    unit: accuracy_pct
+report:
+  column_label: HellaSwag
+  primary_metric: value
+  delta_vs_baseline: relative
+  sort: descending
+timeout_seconds: 1800

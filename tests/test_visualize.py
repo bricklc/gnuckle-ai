@@ -38,7 +38,22 @@ class VisualizeTests(unittest.TestCase):
                     "wikitext2_ppl": {
                         "available": True,
                         "perplexity": 6.123,
+                        "delta_vs_baseline": 0.01,
                     },
+                    "kld_vs_f16": {
+                        "available": True,
+                        "mean_kld": 0.0082,
+                        "p99_kld": 0.041,
+                        "top1_agreement_pct": 97.8,
+                        "top5_agreement_pct": 99.6,
+                        "delta_vs_baseline": 0.0082,
+                    },
+                    "hellaswag": {
+                        "available": True,
+                        "value": 62.4,
+                        "delta_vs_baseline": -0.0064,
+                    },
+                    "quality_tier": "excellent",
                 },
             },
             "turns": [
@@ -55,7 +70,11 @@ class VisualizeTests(unittest.TestCase):
         self.assertEqual(metrics["prompt_tps_bench"], 20.1)
         self.assertEqual(metrics["gen_tps_bench"], 11.4)
         self.assertEqual(metrics["wikitext2_perplexity"], 6.123)
+        self.assertEqual(metrics["wikitext2_delta_vs_baseline"], 0.01)
         self.assertTrue(metrics["quality_available"])
+        self.assertEqual(metrics["kld_mean"], 0.0082)
+        self.assertEqual(metrics["hellaswag_accuracy"], 62.4)
+        self.assertEqual(metrics["quality_tier"], "excellent")
         self.assertEqual(metrics["tps_t1"], 10.0)
         self.assertEqual(metrics["tps_tn"], 8.0)
         self.assertEqual(metrics["vram_peak"], 1300)
@@ -96,7 +115,10 @@ class VisualizeTests(unittest.TestCase):
                 "timestamp": "2026-04-12T07:11:58",
                 "total_turns": 2,
                 "quality_benchmarks": {
-                    "wikitext2_ppl": {"available": True, "perplexity": 6.789},
+                    "wikitext2_ppl": {"available": True, "perplexity": 6.789, "delta_vs_baseline": 0.01},
+                    "kld_vs_f16": {"available": True, "mean_kld": 0.0082},
+                    "hellaswag": {"available": True, "value": 62.4, "delta_vs_baseline": -0.0064},
+                    "quality_tier": "excellent",
                 },
             },
             "aggregate": {
@@ -123,6 +145,7 @@ class VisualizeTests(unittest.TestCase):
         self.assertIn("Total Ctx", html)
         self.assertIn("Provider tokens", html)
         self.assertIn("PPL WT2", html)
+        self.assertIn("excellent", html.lower())
         self.assertIn("6.789", html)
         self.assertIn("120,000/131,072", html)
         self.assertIn("640,000", html)
