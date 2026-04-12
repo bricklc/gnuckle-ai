@@ -1214,6 +1214,7 @@ def run_session_benchmark(
         hallucinated_tools: list[str] = []
         tool_round = 0
         assistant_text = ""
+        assistant_visible_chunks: list[str] = []
         last_usage = empty_usage()
         turn_provider_usage = empty_usage()
         retry_count = 0
@@ -1233,6 +1234,7 @@ def run_session_benchmark(
             hallucinated_tools = []
             tool_round = 0
             assistant_text = ""
+            assistant_visible_chunks = []
             retry_count = 0
             initial_no_response = False
             no_response = False
@@ -1333,6 +1335,7 @@ def run_session_benchmark(
                     }
                 )
                 if assistant_text.strip():
+                    assistant_visible_chunks.append(assistant_text.strip())
                     _append_transcript_entry(transcript, "assistant", "message", assistant_text, turn_id=turn_id)
 
                 if not raw_tool_calls:
@@ -1418,10 +1421,11 @@ def run_session_benchmark(
                             },
                         )
 
+            assistant_visible_text = "\n".join(chunk for chunk in assistant_visible_chunks if chunk).strip()
             scores = _score_turn_v2(
                 {**turn_def, "expect": active_expect},
                 actual_tools_called,
-                assistant_text,
+                assistant_visible_text,
                 hallucinated_tools,
                 no_response=no_response,
             )
@@ -1500,6 +1504,7 @@ def run_session_benchmark(
             "initial_no_response": initial_no_response,
             "no_response": no_response,
             "assistant_text": assistant_text[:2000],
+            "assistant_visible_text": assistant_visible_text[:4000],
             "scores": scores,
             "metrics": {
                 "ttft_ms": first_response_ms,

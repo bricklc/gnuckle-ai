@@ -634,8 +634,28 @@
     {
       "id": "t40_final_wrap",
       "title": "Final session wrap-up",
-      "prompt": "Final checkpoint: summarize the full session in bullet points, including config changes, generated artifacts, tracker changes, agenda recall, and open work, then call finish with a short final summary.",
+      "prompt": "Final checkpoint: first give the full session wrap here in flat bullet points from memory, including config changes, generated artifacts, tracker changes, agenda recall, and open work. After the bullet summary is visible in chat, call finish with a short final summary.",
       "active_tools": ["finish"],
+      "failure_branches": [
+        {
+          "trigger": "content_mismatch",
+          "followup_user_message": "No, I need the bullet summary in the visible reply first. Then call finish.",
+          "max_retries": 1,
+          "expect_override": {
+            "response_format": "bullet_points",
+            "response_format_rules": ["no_headings", "no_tables", "flat_bullets"]
+          }
+        },
+        {
+          "trigger": "format_violation",
+          "followup_user_message": "Keep it plain: flat bullets in chat first, then finish.",
+          "max_retries": 1,
+          "expect_override": {
+            "response_format": "bullet_points",
+            "response_format_rules": ["no_headings", "no_tables", "flat_bullets"]
+          }
+        }
+      ],
       "expect": {
         "tools_called": ["finish"],
         "tools_not_called": ["read_file", "write_file", "list_files"],

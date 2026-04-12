@@ -528,6 +528,53 @@ class SessionRunnerTests(unittest.TestCase):
         transcript_kinds = [entry["kind"] for entry in result["session"]["transcript"]]
         self.assertIn("correction_prompt", transcript_kinds)
 
+    def test_finish_turn_scores_visible_summary_before_final_closure(self) -> None:
+        benchmark = {
+            "id": "bench",
+            "title": "Bench",
+            "type": "session",
+            "system_prompt": "sys",
+            "tools": ["finish"],
+            "turns": [
+                {
+                    "id": "t01",
+                    "prompt": "Summarize, then finish.",
+                    "active_tools": ["finish"],
+                    "expect": {
+                        "tools_called": ["finish"],
+                        "finish_required": True,
+                        "response_contains_literal": ["9090", "handoff.md"],
+                        "response_format": "bullet_points",
+                    },
+                }
+            ],
+        }
+
+        FakeOpenAI.responses = [
+            fake_response(
+                content="- Config changed to 9090\n- Generated handoff.md",
+                tool_calls=[fake_tool_call("tc1", "finish", '{"summary":"done"}')],
+            ),
+            fake_response(content="done"),
+        ]
+
+        with (
+            patch("gnuckle.session_runner.OpenAI", FakeOpenAI),
+            patch("gnuckle.session_runner.estimate_context_token_counts", return_value={"measured": 40, "heuristic": 40}),
+            patch("gnuckle.session_runner.get_hardware_snapshot", return_value={"vram_peak_mb": 1000}),
+            patch("gnuckle.session_runner.empty_usage", return_value={"output_tokens": 0}),
+            patch("gnuckle.session_runner.update_usage", side_effect=lambda current, usage: usage or {"output_tokens": 0}),
+            patch("gnuckle.session_runner.accumulate_usage", side_effect=lambda total, usage: {"output_tokens": (total or {}).get("output_tokens", 0) + (usage or {}).get("output_tokens", 0)}),
+            patch("gnuckle.session_runner.usage_total_tokens", side_effect=lambda usage: (usage or {}).get("output_tokens", 0)),
+        ):
+            result = run_session_benchmark(benchmark, base_url="http://localhost:8080/v1")
+
+        turn = result["turns"][0]
+        self.assertEqual(turn["assistant_text"], "done")
+        self.assertIn("9090", turn["assistant_visible_text"])
+        self.assertIn("handoff.md", turn["assistant_visible_text"])
+        self.assertGreaterEqual(turn["scores"]["turn_score"], 0.7)
+
     def test_attached_context_files_are_loaded_into_rendered_system_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -2229,6 +2229,16 @@ def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
     def turn_metrics(turn: dict) -> dict:
         return turn.get("metrics") or {}
 
+    def context_window_for_cache(cache: str) -> int | None:
+        for turn in by_cache[cache].get("turns", []):
+            context_window = turn_metrics(turn).get("context_window")
+            if context_window not in (None, ""):
+                try:
+                    return int(context_window)
+                except Exception:
+                    continue
+        return None
+
     def cumulative_token_series(cache: str) -> list[int | None]:
         running_total = 0
         values: list[int | None] = []
@@ -2268,7 +2278,26 @@ def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
         pass_rate = float(summary.get("pass_rate", 0) or 0)
         elapsed = float(summary.get("session_elapsed_s", 0) or 0)
         vram_peak = float(((summary.get("final_hardware") or {}).get("vram_peak_mb", 0)) or 0)
-        total_tokens = int(summary.get("provider_usage_total_tokens", 0) or 0)
+        provider_total_tokens = int(summary.get("provider_usage_total_tokens", 0) or 0)
+        peak_context_tokens = int(
+            summary.get("peak_context_tokens_measured")
+            or summary.get("peak_context_tokens_tokenizer")
+            or summary.get("peak_context_tokens_heuristic")
+            or summary.get("peak_context_tokens_estimate")
+            or 0
+        )
+        cumulative_context_tokens = int(
+            summary.get("cumulative_context_tokens_measured")
+            or summary.get("cumulative_context_tokens_tokenizer")
+            or summary.get("cumulative_context_tokens_heuristic")
+            or summary.get("cumulative_context_tokens_estimate")
+            or 0
+        )
+        context_window = context_window_for_cache(cache)
+        peak_context_label = format_num(peak_context_tokens, 0)
+        if context_window:
+            peak_percent = round((peak_context_tokens / max(1, int(context_window))) * 100, 1)
+            peak_context_label = f"{peak_context_label}/{format_num(context_window, 0)} ({peak_percent}%)"
         format_obedience = float(summary.get("format_obedience_rate", 0) or 0)
         semantic_gap_turns = int(summary.get("literal_semantic_gap_turn_count", 0) or 0)
         unsupported_claims = int(summary.get("unsupported_claim_count", 0) or 0)
@@ -2281,7 +2310,9 @@ def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
             f"<td>{format_pct(pass_rate * 100, 1)}</td>"
             f"<td>{int(summary.get('pass_count', 0) or 0)}/{int(meta.get('total_turns', 0) or len(turn_labels))}</td>"
             f"<td>{format_num(elapsed, 1)}</td>"
-            f"<td>{format_num(total_tokens, 0)}</td>"
+            f"<td>{peak_context_label}</td>"
+            f"<td>{format_num(cumulative_context_tokens, 0)}</td>"
+            f"<td>{format_num(provider_total_tokens, 0)}</td>"
             f"<td>{format_pct(format_obedience * 100, 1)}</td>"
             f"<td>{semantic_gap_turns}</td>"
             f"<td>{unsupported_claims}</td>"
@@ -2448,15 +2479,16 @@ td.delta-down {{ background: rgba(180,35,24,0.06); }}
   <section class="panel-grid">
     <div class="panel">
       <h2 class="section-title">Cache leaderboard</h2>
-      <p class="section-sub">Session score, pass rate, elapsed time, token use, formatting obedience, semantic-gap count, unsupported claims, recovery tries, and VRAM peak by quant.</p>
+      <p class="section-sub">Session score, pass rate, elapsed time, peak active context, cumulative context load, cumulative provider tokens, formatting obedience, semantic-gap count, unsupported claims, recovery tries, and VRAM peak by quant.</p>
       <table>
-        <tr><th>Cache</th><th>Avg score</th><th>Pass rate</th><th>Passes</th><th>Time (s)</th><th>Total tokens</th><th>Fmt obey</th><th>Lit→Sem gaps</th><th>Unsupported</th><th>Recovery tries</th><th>VRAM peak</th><th>Delta vs {escape(baseline)}</th></tr>
+        <tr><th>Cache</th><th>Avg score</th><th>Pass rate</th><th>Passes</th><th>Time (s)</th><th>Peak Ctx</th><th>Total Ctx</th><th>Provider tokens</th><th>Fmt obey</th><th>Lit→Sem gaps</th><th>Unsupported</th><th>Recovery tries</th><th>VRAM peak</th><th>Delta vs {escape(baseline)}</th></tr>
         {''.join(table_rows)}
       </table>
     </div>
     <div class="panel">
       <h2 class="section-title">Rubric signals</h2>
       <p class="section-sub">`Fmt obey` is average response-format obedience across turns. `Lit→Sem gaps` counts turns where the model missed a raw literal string but matched the same expected fact after normalization. `Unsupported` counts stateful claims made on turns that required inspection but skipped the required grounding tools. `Recovery tries` counts correction-loop retries before the runner advanced.</p>
+      <p class="section-sub">`Peak Ctx` is the deepest single-turn active context and is the number to compare against the model's max context window. `Total Ctx` and `Provider tokens` are cumulative across the whole session, so they can exceed the max window by a large margin.</p>
       <p class="section-sub">Those signals help separate factual failure, rubric brittleness, and groundedness failure before sending a run to a secondary LLM reviewer.</p>
     </div>
   </section>
@@ -2471,13 +2503,13 @@ td.delta-down {{ background: rgba(180,35,24,0.06); }}
     <div class="chart-shell"><canvas id="ttftTurnChart"></canvas></div>
   </section>
   <section class="panel chart-panel">
-    <h2 class="section-title">Token count through session turns</h2>
-    <p class="section-sub">Cumulative provider token usage as the persistent transcript grows.</p>
+    <h2 class="section-title">Provider token count through session turns</h2>
+    <p class="section-sub">Cumulative input plus output tokens reported by the provider as the persistent transcript grows. This is not the same thing as single-turn active context.</p>
     <div class="chart-shell"><canvas id="tokenTurnChart"></canvas></div>
   </section>
   <section class="panel chart-panel">
-    <h2 class="section-title">TTFT over total token use</h2>
-    <p class="section-sub">Each point shows turn TTFT against cumulative session token usage for that cache quant.</p>
+    <h2 class="section-title">TTFT over provider token use</h2>
+    <p class="section-sub">Each point shows turn TTFT against cumulative provider token usage for that cache quant.</p>
     <div class="chart-shell"><canvas id="ttftTokenChart"></canvas></div>
   </section>
   <section class="panel chart-panel">
@@ -2529,8 +2561,8 @@ function makeScatter(id, datasets, xTitle, yTitle) {{
 }}
 makeLine('vramTurnChart', {json.dumps(turn_labels)}, {json.dumps(vram_datasets)}, 'VRAM peak (MB)');
 makeLine('ttftTurnChart', {json.dumps(turn_labels)}, {json.dumps(ttft_datasets)}, 'TTFT (ms)');
-makeLine('tokenTurnChart', {json.dumps(turn_labels)}, {json.dumps(token_datasets)}, 'Cumulative tokens');
-makeScatter('ttftTokenChart', {json.dumps(ttft_token_datasets)}, 'Cumulative tokens', 'TTFT (ms)');
+makeLine('tokenTurnChart', {json.dumps(turn_labels)}, {json.dumps(token_datasets)}, 'Cumulative provider tokens');
+makeScatter('ttftTokenChart', {json.dumps(ttft_token_datasets)}, 'Cumulative provider tokens', 'TTFT (ms)');
 </script>
 </body></html>"""
 
