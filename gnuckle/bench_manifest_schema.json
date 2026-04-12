@@ -1,0 +1,39 @@
+{
+  "title": "Gnuckle Benchmark Pack Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "version",
+    "gnuckle_min",
+    "author",
+    "description",
+    "license",
+    "kind",
+    "binary",
+    "stages",
+    "parse",
+    "timeout_seconds"
+  ],
+  "properties": {
+    "schema": { "type": "integer", "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{2,48}$" },
+    "version": { "type": "string" },
+    "gnuckle_min": { "type": "string" },
+    "gnuckle_max": { "type": ["string", "null"] },
+    "author": { "type": "object" },
+    "description": { "type": "string" },
+    "license": { "type": "string" },
+    "kind": { "type": "string", "enum": ["quality", "speed", "agentic", "custom"] },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "binary": { "type": "string" },
+    "dataset": { "type": ["object", "null"] },
+    "requires_baseline": { "type": ["string", "null"] },
+    "stages": { "type": "array", "minItems": 1 },
+    "parse": { "type": "object" },
+    "report": { "type": ["object", "null"] },
+    "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 7200 },
+    "code_plugin": { "type": "boolean" }
+  }
+}

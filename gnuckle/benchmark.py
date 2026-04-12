@@ -2725,6 +2725,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                        live_trace: bool = False, trace_prompts: str = "summary",
                        trace_style: str = "theater",
                        selected_workflow_ids=None, session_bench_ids=None,
+                       quality_bench_ids=None,
                        skip_quality: bool = False):
     profile = {}
     if profile_path:
@@ -2895,6 +2896,32 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
             quality_benchmarks = {}
             if skip_quality:
                 print_step("quality benchmarks skipped (--skip-quality)")
+            elif quality_bench_ids:
+                from gnuckle.bench_pack.runner import run_quality_packs
+
+                quality_benchmarks = run_quality_packs(
+                    quality_bench_ids,
+                    server_path=server_path,
+                    model_path=model_path,
+                    cache_label=label,
+                    cache_k=cache_k,
+                    cache_v=cache_v,
+                    split_config=split_config,
+                )
+                if not quality_benchmarks:
+                    print_step("no installed quality packs matched --quality-bench selection")
+                else:
+                    for bench_id, metrics in quality_benchmarks.items():
+                        if metrics.get("available"):
+                            summary_bits = []
+                            for key, value in metrics.items():
+                                if key in {"available", "binary", "capture_truncated"}:
+                                    continue
+                                summary_bits.append(f"{key}={value}")
+                            summary = ", ".join(summary_bits) if summary_bits else "ok"
+                            print_step(f"{bench_id}: {summary}")
+                        else:
+                            print_step(f"{bench_id} unavailable (continuing without quality snapshot): {metrics.get('error', 'unknown error')}")
             else:
                 wikitext2_metrics = collect_llama_perplexity_metrics(
                     server_path=server_path,

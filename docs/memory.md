@@ -48,3 +48,4 @@ Context is treated as a scarce budget. Failure is preserved as data, not a kill 
 2026-04-10 - Preferred runtime invocation is `python -m gnuckle ...`, especially after updates, because it avoids stale launcher or PATH issues.
 2026-04-10 - Every repo change must include an explicit version bump, synchronized across `gnuckle/version.json`, `pyproject.toml`, and `package.json`.
 2026-04-10 - Version bump preference is small forward increments (for example `0.2.8` to `0.2.9`, or `+0.0.1` when requested) rather than reusing an already-used version.
+2026-04-12 - v0.5.0 introduces the declarative pack-runtime foundation and `gnuckle bench` CLI, but the agentic benchmark stack remains the product and must not be migrated to packs during the v0.4 to v1.0 arc.

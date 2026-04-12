@@ -1,6 +1,7 @@
 """gnuckle CLI -- benchmark runner entry point."""
 
 import argparse
+import json
 
 from gnuckle import __version__
 from gnuckle.splash import print_splash
@@ -23,6 +24,10 @@ def cmd_benchmark(args):
     if args.session_bench:
         session_ids = [s.strip() for s in args.session_bench.split(",") if s.strip()]
 
+    quality_ids = None
+    if args.quality_bench:
+        quality_ids = [q.strip() for q in args.quality_bench.split(",") if q.strip()]
+
     run_full_benchmark(
         benchmark_mode=args.mode,
         model_path=args.model,
@@ -40,6 +45,7 @@ def cmd_benchmark(args):
         trace_style=args.trace_style,
         selected_workflow_ids=selected_ids,
         session_bench_ids=session_ids,
+        quality_bench_ids=quality_ids,
         skip_quality=args.skip_quality,
     )
 
@@ -56,6 +62,53 @@ def cmd_update(_args):
     from gnuckle.update import run_update
 
     raise SystemExit(run_update())
+
+
+def cmd_bench_update(args):
+    from gnuckle.bench_pack import sync_registry
+
+    entries = sync_registry(index_url=args.index_url)
+    print(json.dumps({"updated": len(entries)}, indent=2))
+
+
+def cmd_bench_list(_args):
+    from gnuckle.bench_pack.registry import list_available_packs
+    from gnuckle.bench_pack.trust import benchmarks_dir
+
+    installed = sorted([path.name for path in benchmarks_dir().iterdir() if path.is_dir()] if benchmarks_dir().exists() else [])
+    print(json.dumps({"installed": installed, "available": list_available_packs()}, indent=2))
+
+
+def cmd_bench_search(args):
+    from gnuckle.bench_pack import search_packs
+
+    print(json.dumps({"results": search_packs(args.query)}, indent=2))
+
+
+def cmd_bench_info(args):
+    from gnuckle.bench_pack.registry import get_pack_info
+
+    info = get_pack_info(args.pack_id)
+    print(json.dumps(info or {}, indent=2))
+
+
+def cmd_bench_install(args):
+    from gnuckle.bench_pack import install_pack
+
+    result = install_pack(args.pack_id, assume_yes=args.yes, trust_url=args.trust_url)
+    print(json.dumps(result, indent=2))
+
+
+def cmd_bench_remove(args):
+    from gnuckle.bench_pack import remove_pack
+
+    print(json.dumps(remove_pack(args.pack_id), indent=2))
+
+
+def cmd_bench_verify(_args):
+    from gnuckle.bench_pack import verify_installed_packs
+
+    print(json.dumps(verify_installed_packs(), indent=2))
 
 
 def main():
@@ -79,7 +132,7 @@ def main():
 
     bench = subparsers.add_parser(
         "benchmark",
-        aliases=["run", "bench"],
+        aliases=["run"],
         help="run the agentic KV cache benchmark",
         description="Benchmark llama.cpp KV cache quantization on agentic tool-calling workloads.",
     )
@@ -187,7 +240,48 @@ def main():
         action="store_true",
         help="skip quality benchmarks (llama-perplexity / WikiText-2 PPL); useful when the binary is missing or for fast iteration",
     )
+    bench.add_argument(
+        "--quality-bench",
+        type=str,
+        default=None,
+        help="comma-separated installed benchmark pack IDs to run (for example 'wikitext2_ppl,kld_vs_f16')",
+    )
     bench.set_defaults(func=cmd_benchmark)
+
+    benchpacks = subparsers.add_parser(
+        "bench",
+        help="manage installed benchmark packs",
+        description="Registry and install commands for declarative benchmark packs.",
+    )
+    bench_subparsers = benchpacks.add_subparsers(dest="bench_command", help="bench pack commands")
+
+    bench_update = bench_subparsers.add_parser("update", help="sync local registry index")
+    bench_update.add_argument("--index-url", type=str, default=None, help="override registry index URL")
+    bench_update.set_defaults(func=cmd_bench_update)
+
+    bench_list = bench_subparsers.add_parser("list", help="show installed and available benchmark packs")
+    bench_list.set_defaults(func=cmd_bench_list)
+
+    bench_search = bench_subparsers.add_parser("search", help="search available benchmark packs")
+    bench_search.add_argument("query", nargs="?", default="", help="search keyword")
+    bench_search.set_defaults(func=cmd_bench_search)
+
+    bench_info = bench_subparsers.add_parser("info", help="show one pack from the local registry")
+    bench_info.add_argument("pack_id", help="pack identifier")
+    bench_info.set_defaults(func=cmd_bench_info)
+
+    bench_install = bench_subparsers.add_parser("install", help="install a pack from the registry or a local manifest path")
+    bench_install.add_argument("pack_id", help="registry pack ID or local manifest path")
+    bench_install.add_argument("--yes", action="store_true", help="skip interactive confirmation")
+    bench_install.add_argument("--trust-url", action="store_true", help="allow dataset URLs outside the trusted host list")
+    bench_install.set_defaults(func=cmd_bench_install)
+
+    bench_remove = bench_subparsers.add_parser("remove", help="remove an installed benchmark pack")
+    bench_remove.add_argument("pack_id", help="pack identifier")
+    bench_remove.set_defaults(func=cmd_bench_remove)
+
+    bench_verify = bench_subparsers.add_parser("verify", help="re-verify installed pack hashes against the lockfile")
+    bench_verify.set_defaults(func=cmd_bench_verify)
 
     viz = subparsers.add_parser(
         "visualize",
@@ -214,6 +308,12 @@ def main():
     if args.command is None:
         print_splash()
         parser.print_help()
+        print()
+        return
+
+    if args.command == "bench" and getattr(args, "bench_command", None) is None:
+        print_splash()
+        benchpacks.print_help()
         print()
         return
 
