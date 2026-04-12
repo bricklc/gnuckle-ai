@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from gnuckle.benchmark import parse_llama_bench_output
+from gnuckle.benchmark import parse_llama_bench_output, parse_llama_perplexity_output
 from gnuckle.visualize import build_session_comparison_html, extract_metrics
 
 
@@ -27,6 +27,10 @@ class VisualizeTests(unittest.TestCase):
                     "available": True,
                     "prompt_tokens_per_second": 20.1,
                     "generation_tokens_per_second": 11.4,
+                },
+                "quality_benchmark": {
+                    "available": True,
+                    "perplexity": 6.123,
                 }
             },
             "turns": [
@@ -42,6 +46,7 @@ class VisualizeTests(unittest.TestCase):
         self.assertTrue(metrics["throughput_available"])
         self.assertEqual(metrics["prompt_tps_bench"], 20.1)
         self.assertEqual(metrics["gen_tps_bench"], 11.4)
+        self.assertEqual(metrics["wikitext2_perplexity"], 6.123)
         self.assertEqual(metrics["tps_t1"], 10.0)
         self.assertEqual(metrics["tps_tn"], 8.0)
         self.assertEqual(metrics["vram_peak"], 1300)
@@ -56,6 +61,7 @@ class VisualizeTests(unittest.TestCase):
                 "benchmark_title": "Demo Session",
                 "timestamp": "2026-04-12T07:11:58",
                 "total_turns": 2,
+                "quality_benchmark": {"available": True, "perplexity": 6.789},
             },
             "aggregate": {
                 "average_score": 0.95,
@@ -80,10 +86,21 @@ class VisualizeTests(unittest.TestCase):
         self.assertIn("Peak Ctx", html)
         self.assertIn("Total Ctx", html)
         self.assertIn("Provider tokens", html)
+        self.assertIn("PPL WT2", html)
+        self.assertIn("6.789", html)
         self.assertIn("120,000/131,072", html)
         self.assertIn("640,000", html)
         self.assertIn("600,000", html)
         self.assertIn("not the same thing as single-turn active context", html)
+
+    def test_parse_llama_perplexity_output_extracts_final_ppl(self) -> None:
+        raw = """
+llama_perf_context_print:        load time =     321.42 ms
+some other line
+Final estimate: PPL = 6.4321 +/- 0.0123
+"""
+        parsed = parse_llama_perplexity_output(raw)
+        self.assertEqual(parsed["perplexity"], 6.4321)
 
 
 if __name__ == "__main__":

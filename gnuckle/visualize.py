@@ -218,6 +218,7 @@ $acc_legend
           <th>Compression</th>
           <th>Prompt (t/s)</th>
           <th>Gen (t/s)</th>
+          <th>PPL WT2</th>
           <th>Gen tok/s (t1)</th>
           <th>Gen tok/s ($num_turns)</th>
           <th>Degradation</th>
@@ -708,6 +709,7 @@ def extract_metrics(data):
     meta = data.get("meta", {})
     aggregate = data.get("aggregate", {}) or {}
     throughput_benchmark = meta.get("throughput_benchmark", {}) or {}
+    quality_benchmark = meta.get("quality_benchmark", {}) or {}
     tps_list = [t.get("tps", 0) for t in turns if t.get("tps", 0) > 0]
     ttft_list = [t.get("ttft_ms") for t in turns if t.get("ttft_ms") is not None]
     acc_list = [t.get("tool_accuracy_pct") for t in turns if t.get("tool_accuracy_pct") is not None]
@@ -726,6 +728,8 @@ def extract_metrics(data):
         "prompt_tps_bench": throughput_benchmark.get("prompt_tokens_per_second"),
         "gen_tps_bench": throughput_benchmark.get("generation_tokens_per_second"),
         "throughput_available": bool(throughput_benchmark.get("available")),
+        "wikitext2_perplexity": quality_benchmark.get("perplexity"),
+        "quality_available": bool(quality_benchmark.get("available")),
         "tps_t1": round(t1_tps, 2),
         "tps_tn": round(tn_tps, 2),
         "tps_all": [round(v, 2) for v in tps_list],
@@ -998,9 +1002,9 @@ def build_html(by_cache, model_name, timestamp, system_prompt_summary="system pr
       <div class="sub {'good' if hero_m['vram_peak'] <= baseline_m['vram_peak'] else 'warn'}">vs {format_num(baseline_m['vram_peak'], 0)} {escape(baseline)}</div>
     </div>""",
             f"""    <div class="mcard">
-      <div class="val">{format_num(hero_m["total_context_tokens"], 0)}</div>
-      <div class="lbl">Total context {escape(hero)}</div>
-      <div class="sub {'good' if hero_m['total_context_tokens'] <= baseline_m['total_context_tokens'] else 'warn'}">peak {format_num(hero_m['peak_context_tokens'], 0)} tokens</div>
+      <div class="val">{format_num(hero_m["wikitext2_perplexity"], 3) if hero_m["wikitext2_perplexity"] is not None else 'n/a'}</div>
+      <div class="lbl">PPL WT2</div>
+      <div class="sub {'good' if hero_m['wikitext2_perplexity'] is not None else 'warn'}">familiar WikiText-2 quality anchor</div>
     </div>""",
             f"""    <div class="mcard">
       <div class="val">{format_pct(hero_m["acc_avg"])}</div>
@@ -1062,6 +1066,7 @@ def build_html(by_cache, model_name, timestamp, system_prompt_summary="system pr
           <td>{emphasis[0]}{(format_num(float(cache_compression(cache)), 1) + '&times;') if cache_compression(cache) != 'n/a' else 'n/a'}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["prompt_tps_bench"]) if m["prompt_tps_bench"] is not None else 'n/a'}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["gen_tps_bench"]) if m["gen_tps_bench"] is not None else 'n/a'}{emphasis[1]}</td>
+          <td>{emphasis[0]}{format_num(m["wikitext2_perplexity"], 3) if m["wikitext2_perplexity"] is not None else 'n/a'}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["tps_t1"])}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["tps_tn"])}{emphasis[1]}</td>
           <td class="{deg_class(m['degradation'])}">{emphasis[0]}{format_pct(m["degradation"])}{emphasis[1]}</td>
@@ -2278,6 +2283,8 @@ def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
         pass_rate = float(summary.get("pass_rate", 0) or 0)
         elapsed = float(summary.get("session_elapsed_s", 0) or 0)
         vram_peak = float(((summary.get("final_hardware") or {}).get("vram_peak_mb", 0)) or 0)
+        quality_benchmark = by_cache[cache].get("meta", {}).get("quality_benchmark", {}) or {}
+        wikitext2_perplexity = quality_benchmark.get("perplexity")
         provider_total_tokens = int(summary.get("provider_usage_total_tokens", 0) or 0)
         peak_context_tokens = int(
             summary.get("peak_context_tokens_measured")
@@ -2310,6 +2317,7 @@ def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
             f"<td>{format_pct(pass_rate * 100, 1)}</td>"
             f"<td>{int(summary.get('pass_count', 0) or 0)}/{int(meta.get('total_turns', 0) or len(turn_labels))}</td>"
             f"<td>{format_num(elapsed, 1)}</td>"
+            f"<td>{format_num(wikitext2_perplexity, 3) if wikitext2_perplexity is not None else 'n/a'}</td>"
             f"<td>{peak_context_label}</td>"
             f"<td>{format_num(cumulative_context_tokens, 0)}</td>"
             f"<td>{format_num(provider_total_tokens, 0)}</td>"
@@ -2479,9 +2487,9 @@ td.delta-down {{ background: rgba(180,35,24,0.06); }}
   <section class="panel-grid">
     <div class="panel">
       <h2 class="section-title">Cache leaderboard</h2>
-      <p class="section-sub">Session score, pass rate, elapsed time, peak active context, cumulative context load, cumulative provider tokens, formatting obedience, semantic-gap count, unsupported claims, recovery tries, and VRAM peak by quant.</p>
+      <p class="section-sub">Session score, pass rate, elapsed time, WikiText-2 perplexity, peak active context, cumulative context load, cumulative provider tokens, formatting obedience, semantic-gap count, unsupported claims, recovery tries, and VRAM peak by quant.</p>
       <table>
-        <tr><th>Cache</th><th>Avg score</th><th>Pass rate</th><th>Passes</th><th>Time (s)</th><th>Peak Ctx</th><th>Total Ctx</th><th>Provider tokens</th><th>Fmt obey</th><th>Lit→Sem gaps</th><th>Unsupported</th><th>Recovery tries</th><th>VRAM peak</th><th>Delta vs {escape(baseline)}</th></tr>
+        <tr><th>Cache</th><th>Avg score</th><th>Pass rate</th><th>Passes</th><th>Time (s)</th><th>PPL WT2</th><th>Peak Ctx</th><th>Total Ctx</th><th>Provider tokens</th><th>Fmt obey</th><th>Lit→Sem gaps</th><th>Unsupported</th><th>Recovery tries</th><th>VRAM peak</th><th>Delta vs {escape(baseline)}</th></tr>
         {''.join(table_rows)}
       </table>
     </div>

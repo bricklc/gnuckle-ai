@@ -12,6 +12,7 @@ import signal
 import socket
 import copy
 import webbrowser
+import zipfile
 from pathlib import Path
 from datetime import datetime
 from functools import lru_cache
@@ -1152,10 +1153,17 @@ BENCH_NAMES = [
     "llama-bench", "llama-bench.exe",
     "bench", "bench.exe",
 ]
+PERPLEXITY_NAMES = [
+    "llama-perplexity", "llama-perplexity.exe",
+    "perplexity", "perplexity.exe",
+]
 SERVER_SEARCH_DIRS = [
     ".", "build/bin", "build/bin/Release", "build/bin/Debug",
     "bin", "build",
 ]
+DATASET_CACHE_DIR = Path.home() / ".gnuckle" / "datasets" / "wikitext-2-raw-v1"
+WIKITEXT2_RAW_URL = "https://huggingface.co/datasets/ggml-org/ci/resolve/main/wikitext-2-raw-v1.zip"
+WIKITEXT2_TEST_FILE = "wiki.test.raw"
 
 def find_server(base_dir: Path):
     """Auto-detect llama-server binary in cwd and common build dirs."""
@@ -1201,6 +1209,39 @@ def find_bench(server_path: Path):
     return _search_binary(roots, BENCH_NAMES)
 
 
+def find_perplexity(server_path: Path):
+    """Find llama-perplexity near the selected llama-server binary."""
+    roots = [server_path.parent]
+    if server_path.parent.parent != server_path.parent:
+        roots.append(server_path.parent.parent)
+    if server_path.parent.parent.parent != server_path.parent.parent:
+        roots.append(server_path.parent.parent.parent)
+    return _search_binary(roots, PERPLEXITY_NAMES)
+
+
+def ensure_wikitext2_dataset(cache_dir: Path | None = None) -> Path:
+    """Ensure WikiText-2 raw test file exists locally and return its path."""
+    cache_root = Path(cache_dir or DATASET_CACHE_DIR)
+    cache_root.mkdir(parents=True, exist_ok=True)
+    dataset_path = cache_root / WIKITEXT2_TEST_FILE
+    if dataset_path.is_file():
+        return dataset_path
+
+    archive_path = cache_root / "wikitext-2-raw-v1.zip"
+    request = Request(WIKITEXT2_RAW_URL, headers={"User-Agent": f"gnuckle/{__import__('gnuckle').__version__}"})
+    with urlopen(request, timeout=120) as response:
+        archive_path.write_bytes(response.read())
+
+    with zipfile.ZipFile(archive_path) as zf:
+        members = {Path(name).name: name for name in zf.namelist()}
+        member_name = members.get(WIKITEXT2_TEST_FILE)
+        if not member_name:
+            raise ValueError(f"{WIKITEXT2_TEST_FILE} not found in downloaded WikiText-2 archive")
+        with zf.open(member_name) as src, dataset_path.open("wb") as dst:
+            dst.write(src.read())
+    return dataset_path
+
+
 def parse_llama_bench_output(output: str) -> dict:
     """Extract prompt and generation throughput from llama-bench text output."""
     import re
@@ -1235,6 +1276,29 @@ def parse_llama_bench_output(output: str) -> dict:
         elif label.startswith("tg") and metrics["generation_tokens_per_second"] is None:
             metrics["generation_tokens_per_second"] = rate
             metrics["generation_label"] = label
+    return metrics
+
+
+def parse_llama_perplexity_output(output: str) -> dict:
+    """Extract final WikiText-2 perplexity from llama-perplexity output."""
+    import re
+
+    metrics = {
+        "perplexity": None,
+        "stderr_note": None,
+    }
+    lines = [line.strip() for line in str(output or "").splitlines() if line.strip()]
+    ppl_re = re.compile(r"\bPPL\s*=\s*([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
+    matches = []
+    for line in lines:
+        match = ppl_re.search(line)
+        if match:
+            try:
+                matches.append(float(match.group(1)))
+            except ValueError:
+                continue
+    if matches:
+        metrics["perplexity"] = matches[-1]
     return metrics
 
 
@@ -1304,6 +1368,79 @@ def collect_llama_bench_metrics(server_path: Path, model_path: Path, cache_k: st
     )
     if not metrics["available"]:
         metrics["error"] = "unable to parse llama-bench output"
+    return metrics
+
+
+def collect_llama_perplexity_metrics(server_path: Path, model_path: Path, cache_k: str, cache_v: str, preset=None, split_config=None) -> dict:
+    """Run llama-perplexity on WikiText-2 and return a required quality snapshot."""
+    preset = preset or select_preset(model_path)
+    split_config = split_config or {}
+    perplexity_path = find_perplexity(server_path)
+    dataset_path = None
+    metrics = {
+        "available": False,
+        "perplexity_path": str(perplexity_path) if perplexity_path else None,
+        "dataset_path": None,
+        "dataset_name": "wikitext-2-raw-v1",
+        "dataset_split": WIKITEXT2_TEST_FILE,
+        "perplexity": None,
+        "raw_output": None,
+        "error": None,
+    }
+    if perplexity_path is None:
+        metrics["error"] = "llama-perplexity binary not found"
+        return metrics
+
+    try:
+        dataset_path = ensure_wikitext2_dataset()
+    except Exception as exc:
+        metrics["error"] = f"failed to prepare WikiText-2 dataset: {exc}"
+        return metrics
+    metrics["dataset_path"] = str(dataset_path)
+
+    split_mode = split_config.get("split_mode", "layer")
+    main_gpu = split_config.get("main_gpu", 0)
+    tensor_split = split_config.get("tensor_split")
+    cmd = [
+        str(perplexity_path),
+        "-m", str(model_path),
+        "-f", str(dataset_path),
+        "--ctx-size", "512",
+        "-ngl", "99",
+        "--split-mode", str(split_mode),
+        "--main-gpu", str(main_gpu),
+        "--cache-type-k", cache_k,
+        "--cache-type-v", cache_v,
+    ]
+    if tensor_split:
+        cmd.extend(["--tensor-split", str(tensor_split)])
+    cmd.extend(build_llama_args(preset.get("server_args", {})))
+
+    try:
+        completed = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=1800,
+            check=False,
+        )
+    except Exception as exc:
+        metrics["error"] = str(exc)
+        return metrics
+
+    raw_output = ((completed.stdout or "") + "\n" + (completed.stderr or "")).strip()
+    metrics["raw_output"] = raw_output[:4000]
+    if completed.returncode != 0:
+        metrics["error"] = f"llama-perplexity failed with exit code {completed.returncode}"
+        return metrics
+
+    parsed = parse_llama_perplexity_output(raw_output)
+    metrics.update(parsed)
+    metrics["available"] = parsed.get("perplexity") is not None
+    if not metrics["available"]:
+        metrics["error"] = "unable to parse llama-perplexity output"
     return metrics
 
 def prompt_gguf_selection(gguf_files):
@@ -1616,7 +1753,8 @@ def call_with_metrics(client, messages, port, preset=None, base_url: str | None 
 
 # ── SINGLE CACHE-TYPE RUN ─────────────────────────────────────────────────────
 def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, preset=None, system_prompt=None,
-                       system_prompt_source="custom_inline", split_config=None, throughput_benchmark=None):
+                       system_prompt_source="custom_inline", split_config=None, throughput_benchmark=None,
+                       quality_benchmark=None):
     base_url = DEFAULT_BASE_URL.format(port=port)
     client   = OpenAI(base_url=base_url, api_key=API_KEY)
     exact_available = probe_llamacpp_exact(base_url)
@@ -1643,6 +1781,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "token_counting": token_counting_info(exact_available=exact_available),
             "split_config": split_config,
             "throughput_benchmark": throughput_benchmark or {},
+            "quality_benchmark": quality_benchmark or {},
         },
         "turns": [],
         "aggregate": {
@@ -1672,11 +1811,14 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "cumulative_context_tokens_measured": None,
             "prompt_tokens_per_second_bench": None,
             "generation_tokens_per_second_bench": None,
+            "wikitext2_perplexity": None,
         },
     }
     if throughput_benchmark:
         results["aggregate"]["prompt_tokens_per_second_bench"] = throughput_benchmark.get("prompt_tokens_per_second")
         results["aggregate"]["generation_tokens_per_second_bench"] = throughput_benchmark.get("generation_tokens_per_second")
+    if quality_benchmark:
+        results["aggregate"]["wikitext2_perplexity"] = quality_benchmark.get("perplexity")
 
     messages = [
         {
@@ -2104,7 +2246,9 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
                                max_turns=None, system_prompt=None, server_pid=None, split_config=None,
                                live_trace: bool = False, trace_prompts: str = "summary",
                                trace_style: str = "theater",
-                               selected_workflow_ids=None):
+                               selected_workflow_ids=None,
+                               throughput_benchmark=None,
+                               quality_benchmark=None):
     from gnuckle.agentic_runtime import run_agentic_episode
     from gnuckle.benchmark_scoring import aggregate_workflow_runs, assign_type, finalize_benchmark_summary
     from gnuckle.workflow_loader import load_workflow_suite
@@ -2225,6 +2369,8 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
         },
         generated_at=datetime.now().isoformat(),
     )
+    summary["throughput_benchmark"] = throughput_benchmark or {}
+    summary["quality_benchmark"] = quality_benchmark or {}
     out_path = output_dir / f"agentic_{sanitize_label(cache_label)}.json"
     out_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print_step(f"saved: {out_path.name}")
@@ -2664,6 +2810,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
             cache_k = cfg["cache_k"]
             cache_v = cfg["cache_v"]
             throughput_benchmark = {}
+            quality_benchmark = {}
 
             render_progress(f"cache run {i + 1}/{len(cache_configs)} ({label})", i, len(cache_configs), done=False)
             print_header(f"Run {i+1}/{len(cache_configs)}: {label}  (cache-k={cache_k} cache-v={cache_v})")
@@ -2707,9 +2854,28 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                     f"gen={throughput_benchmark.get('generation_tokens_per_second')} t/s"
                 )
             else:
-                print_step(
-                    "llama-bench unavailable: "
+                raise RuntimeError(
+                    "llama-bench required but unavailable: "
                     f"{throughput_benchmark.get('error', 'unknown error')}"
+                )
+
+            quality_benchmark = collect_llama_perplexity_metrics(
+                server_path=server_path,
+                model_path=model_path,
+                cache_k=cache_k,
+                cache_v=cache_v,
+                preset=preset,
+                split_config=split_config,
+            )
+            if quality_benchmark.get("available"):
+                print_step(
+                    "llama-perplexity: "
+                    f"WikiText-2 PPL={quality_benchmark.get('perplexity')}"
+                )
+            else:
+                raise RuntimeError(
+                    "llama-perplexity required but unavailable: "
+                    f"{quality_benchmark.get('error', 'unknown error')}"
                 )
 
             out = None
@@ -2731,6 +2897,8 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                         trace_prompts=trace_prompts,
                         trace_style=trace_style,
                         selected_workflow_ids=selected_workflow_ids,
+                        throughput_benchmark=throughput_benchmark,
+                        quality_benchmark=quality_benchmark,
                     )
 
                     # Run selected session benchmarks after workflow pass
@@ -2758,6 +2926,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                                 session_path = output_path / f"session_{bench['id']}_{sanitize_label(label)}.json"
                                 session_out["meta"]["cache_label"] = label
                                 session_out["meta"]["throughput_benchmark"] = throughput_benchmark
+                                session_out["meta"]["quality_benchmark"] = quality_benchmark
                                 session_path.write_text(json.dumps(session_out, indent=2, default=str), encoding="utf-8")
                                 print_step(f"session benchmark saved: {session_path.name}")
                             except Exception as se:
@@ -2786,6 +2955,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                             )
                             session_out["meta"]["cache_label"] = label
                             session_out["meta"]["throughput_benchmark"] = throughput_benchmark
+                            session_out["meta"]["quality_benchmark"] = quality_benchmark
                             session_path = output_path / f"session_{bench['id']}_{sanitize_label(label)}.json"
                             session_path.write_text(json.dumps(session_out, indent=2, default=str), encoding="utf-8")
                             out = session_path
@@ -2805,6 +2975,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                         system_prompt_source=system_prompt_source,
                         split_config=split_config,
                         throughput_benchmark=throughput_benchmark,
+                        quality_benchmark=quality_benchmark,
                     )
                 if out is not None:
                     output_files.append(out)
