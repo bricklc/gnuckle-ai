@@ -222,6 +222,44 @@ class BenchPackTests(unittest.TestCase):
         output = json.loads(captured.getvalue())
         self.assertEqual(output["installed"], [])
         self.assertEqual(output["available"], [])
+        self.assertEqual(output["benchmarks"], [])
+
+    def test_bench_list_merges_installed_and_available_into_one_view(self) -> None:
+        registry_entries = [{
+            "id": "wikitext2_ppl",
+            "name": "WikiText-2 Perplexity",
+            "version": "1.0.0",
+            "author": "gnuckle-ai",
+            "downloads": 12,
+            "homepage": "https://github.com/bricklc/gnuckle-ai",
+            "description": "demo",
+        }, {
+            "id": "kld_vs_f16",
+            "name": "KLD vs f16",
+            "version": "1.0.0",
+            "author": "gnuckle-ai",
+            "downloads": 4,
+            "homepage": "https://github.com/bricklc/gnuckle-ai",
+            "description": "demo",
+        }]
+        save_local_index(registry_entries)
+        manifest = base_manifest_dict()
+        manifest["id"] = "wikitext2_ppl"
+        manifest["name"] = "WikiText-2 Perplexity"
+        manifest["version"] = "1.0.0"
+        manifest["homepage"] = "https://github.com/bricklc/gnuckle-ai"
+        manifest["author"] = {"name": "gnuckle-ai", "contact": "https://github.com/bricklc/gnuckle-ai"}
+        install_pack(str(self._write_manifest(manifest, "wikitext2_installed.json")), assume_yes=True)
+
+        captured = io.StringIO()
+        with redirect_stdout(captured):
+            cmd_bench_list(SimpleNamespace())
+        output = json.loads(captured.getvalue())
+        merged = {entry["id"]: entry for entry in output["benchmarks"]}
+        self.assertEqual(merged["wikitext2_ppl"]["status"], "installed")
+        self.assertEqual(merged["kld_vs_f16"]["status"], "available")
+        self.assertEqual(merged["wikitext2_ppl"]["author"], "gnuckle-ai")
+        self.assertEqual(merged["kld_vs_f16"]["downloads"], 4)
 
     def test_registry_update_and_local_index_roundtrip(self) -> None:
         payload = json.dumps({

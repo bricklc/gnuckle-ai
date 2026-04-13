@@ -79,11 +79,11 @@ def cmd_bench_update(args):
 
 
 def cmd_bench_list(_args):
-    from gnuckle.bench_pack.registry import list_available_packs
+    from gnuckle.bench_pack.registry import list_available_packs, list_registry_benchmarks
     from gnuckle.bench_pack.trust import benchmarks_dir
 
     installed = sorted([path.name for path in benchmarks_dir().iterdir() if path.is_dir()] if benchmarks_dir().exists() else [])
-    print(json.dumps({"installed": installed, "available": list_available_packs()}, indent=2))
+    print(json.dumps({"installed": installed, "available": list_available_packs(), "benchmarks": list_registry_benchmarks()}, indent=2))
 
 
 def cmd_bench_search(args):

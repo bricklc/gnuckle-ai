@@ -9,6 +9,8 @@ from urllib.request import url2pathname
 from urllib.request import Request, urlopen
 
 from gnuckle import __version__
+from gnuckle.bench_pack.manifest import load_manifest_file
+from gnuckle.bench_pack.trust import benchmarks_dir
 from gnuckle.bench_pack.trust import append_audit_log, ensure_home_layout, registry_dir
 
 def bundled_registry_index_url() -> str:
@@ -74,6 +76,62 @@ def sync_registry(index_url: str | None = None) -> list[dict]:
 
 def list_available_packs() -> list[dict]:
     return load_local_index()
+
+
+def list_registry_benchmarks() -> list[dict]:
+    ensure_home_layout()
+    available = load_local_index()
+    installed_root = benchmarks_dir()
+    installed_dirs = sorted([path for path in installed_root.iterdir() if path.is_dir()] if installed_root.exists() else [], key=lambda p: p.name)
+
+    installed_meta = {}
+    for pack_dir in installed_dirs:
+        manifest_path = pack_dir / "manifest.yaml"
+        if not manifest_path.is_file():
+            installed_meta[pack_dir.name] = {"id": pack_dir.name, "status": "installed"}
+            continue
+        try:
+            manifest, _, _ = load_manifest_file(manifest_path, trust_url=True)
+            installed_meta[pack_dir.name] = {
+                "id": manifest.id,
+                "name": manifest.name,
+                "version": manifest.version,
+                "author": manifest.author.name,
+                "downloads": manifest.downloads,
+                "homepage": manifest.homepage,
+                "description": manifest.description,
+                "tags": list(manifest.tags),
+                "status": "installed",
+            }
+        except Exception:
+            installed_meta[pack_dir.name] = {"id": pack_dir.name, "status": "installed"}
+
+    merged = []
+    seen = set()
+    for entry in available:
+        pack_id = entry.get("id")
+        if not pack_id:
+            continue
+        item = dict(entry)
+        installed = installed_meta.get(pack_id)
+        if installed:
+            item["installed_version"] = installed.get("version")
+            item["status"] = "installed" if installed.get("version") == item.get("version") else "update_available"
+        else:
+            item["status"] = "available"
+        merged.append(item)
+        seen.add(pack_id)
+
+    for pack_id, item in installed_meta.items():
+        if pack_id in seen:
+            continue
+        merged.append(item)
+
+    def sort_key(entry: dict):
+        status_rank = {"installed": 0, "update_available": 1, "available": 2}.get(entry.get("status"), 9)
+        return (status_rank, str(entry.get("name") or entry.get("id") or ""))
+
+    return sorted(merged, key=sort_key)
 
 
 def get_pack_info(pack_id: str) -> dict | None:

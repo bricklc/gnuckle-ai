@@ -90,11 +90,11 @@ class MenuTests(unittest.TestCase):
         installed_dir = profiles_dir().parent / "benchmarks"
         (installed_dir / "wikitext2_ppl").mkdir(parents=True, exist_ok=True)
         available = [
-            {"id": "wikitext2_ppl"},
-            {"id": "kld_vs_f16"},
-            {"id": "hellaswag"},
+            {"id": "wikitext2_ppl", "status": "installed", "version": "1.0.0", "author": "gnuckle-ai", "downloads": 0},
+            {"id": "kld_vs_f16", "status": "available", "version": "1.0.0", "author": "gnuckle-ai", "downloads": 0},
+            {"id": "hellaswag", "status": "available", "version": "1.0.0", "author": "gnuckle-ai", "downloads": 0},
         ]
-        with patch("gnuckle.menu.list_available_packs", return_value=available), patch(
+        with patch("gnuckle.menu.list_registry_benchmarks", return_value=available), patch(
             "gnuckle.menu._arrow_select", return_value=[0, 1, 2]
         ):
             picked = _pick_quality_packs(state)

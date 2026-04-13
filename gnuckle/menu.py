@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-from gnuckle.bench_pack.registry import list_available_packs, sync_registry
+from gnuckle.bench_pack.registry import list_available_packs, list_registry_benchmarks, sync_registry
 from gnuckle.bench_pack.trust import benchmarks_dir
 from gnuckle.benchmark import (
     DEFAULT_BENCHMARK_MODE,
@@ -346,21 +346,22 @@ def _pick_cache_types(state: dict) -> list[str]:
 
 def _pick_quality_packs(state: dict) -> list[str]:
     installed = [path.name for path in benchmarks_dir().iterdir() if path.is_dir()] if benchmarks_dir().exists() else []
-    available = list_available_packs()
-    available_ids = [entry.get("id") for entry in available if entry.get("id")]
-    options = []
-    seen = set()
-    for option in installed + available_ids:
-        if option and option not in seen:
-            seen.add(option)
-            options.append(option)
+    merged = list_registry_benchmarks()
+    options = [entry.get("id") for entry in merged if entry.get("id")]
     if not options:
         return []
     installed_set = set(installed)
+    entry_by_id = {entry.get("id"): entry for entry in merged if entry.get("id")}
     rendered = [
         {
             "label": option,
-            "detail": "installed quality benchmark pack" if option in installed_set else "available from registry; install before run",
+            "detail": (
+                f"{entry_by_id[option].get('status', 'available')} | "
+                f"v{entry_by_id[option].get('version', entry_by_id[option].get('installed_version', '?'))} | "
+                f"{entry_by_id[option].get('author', 'unknown')} | "
+                f"{entry_by_id[option].get('downloads', 0)} dl"
+                + (" | installed now" if option in installed_set else " | install before run")
+            ),
         }
         for option in options
     ]
