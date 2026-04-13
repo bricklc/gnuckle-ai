@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from gnuckle.menu import (
     _apply_profile_to_state,
+    _pick_quality_packs,
     default_menu_state,
     menu_state_to_profile,
     render_banana_loading_bar,
@@ -83,3 +84,18 @@ class MenuTests(unittest.TestCase):
         kwargs = mocked.call_args.kwargs
         self.assertEqual(kwargs["cache_labels"], ["f16", "turbo3"])
         self.assertEqual(kwargs["quality_bench_ids"], ["wikitext2_ppl"])
+
+    def test_pick_quality_packs_includes_available_registry_entries_even_when_installed_exists(self) -> None:
+        state = default_menu_state()
+        installed_dir = profiles_dir().parent / "benchmarks"
+        (installed_dir / "wikitext2_ppl").mkdir(parents=True, exist_ok=True)
+        available = [
+            {"id": "wikitext2_ppl"},
+            {"id": "kld_vs_f16"},
+            {"id": "hellaswag"},
+        ]
+        with patch("gnuckle.menu.list_available_packs", return_value=available), patch(
+            "gnuckle.menu._arrow_select", return_value=[0, 1, 2]
+        ):
+            picked = _pick_quality_packs(state)
+        self.assertEqual(picked, ["wikitext2_ppl", "kld_vs_f16", "hellaswag"])

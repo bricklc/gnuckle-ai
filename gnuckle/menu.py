@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-from gnuckle.bench_pack.registry import list_available_packs
+from gnuckle.bench_pack.registry import list_available_packs, sync_registry
 from gnuckle.bench_pack.trust import benchmarks_dir
 from gnuckle.benchmark import (
     DEFAULT_BENCHMARK_MODE,
@@ -347,11 +347,23 @@ def _pick_cache_types(state: dict) -> list[str]:
 def _pick_quality_packs(state: dict) -> list[str]:
     installed = [path.name for path in benchmarks_dir().iterdir() if path.is_dir()] if benchmarks_dir().exists() else []
     available = list_available_packs()
-    options = installed or [entry.get("id") for entry in available if entry.get("id")]
-    options = [option for option in options if option]
+    available_ids = [entry.get("id") for entry in available if entry.get("id")]
+    options = []
+    seen = set()
+    for option in installed + available_ids:
+        if option and option not in seen:
+            seen.add(option)
+            options.append(option)
     if not options:
         return []
-    rendered = [{"label": option, "detail": "quality benchmark pack"} for option in options]
+    installed_set = set(installed)
+    rendered = [
+        {
+            "label": option,
+            "detail": "installed quality benchmark pack" if option in installed_set else "available from registry; install before run",
+        }
+        for option in options
+    ]
     preselected = set(range(len(options))) if not state.get("quality_bench_ids") else {
         idx for idx, option in enumerate(options) if option in state.get("quality_bench_ids", [])
     }
@@ -543,6 +555,10 @@ def _configure_benchmarks(state: dict) -> None:
 def run_interactive_menu() -> None:
     if not _is_interactive_terminal():
         raise SystemExit("interactive menu requires a TTY")
+    try:
+        sync_registry()
+    except Exception:
+        pass
     state = default_menu_state()
 
     while True:
