@@ -9,6 +9,7 @@ from gnuckle.benchmark import (
     NON_SERVER_ARG_ALLOWLIST,
     build_llama_args,
     build_llama_args_non_server,
+    parse_llamacpp_server_metrics,
     parse_llama_bench_output,
     parse_llama_perplexity_output,
 )
@@ -34,6 +35,30 @@ class VisualizeTests(unittest.TestCase):
         self.assertEqual(parsed["prompt_tokens_per_second"], 19.3)
         self.assertEqual(parsed["generation_tokens_per_second"], 10.6)
 
+    def test_parse_llamacpp_server_metrics_extracts_eval_and_update_slots(self) -> None:
+        raw = """
+slot launch_slot_: id 3 | task 0 | new prompt, n_ctx_slot = 131072, n_keep = 0, task.n_tokens = 233
+slot update_slots: id 3 | task 0 | prompt processing progress, n_tokens = 229, batch.n_tokens = 229, progress = 0.982833
+prompt eval time =     296.63 ms /   233 tokens (    1.27 ms per token,   785.48 tokens per second)
+eval time =    16135.97 ms /  1056 tokens (   15.28 ms per token,    65.44 tokens per second)
+total time =   16432.61 ms /  1289 tokens
+"""
+        parsed = parse_llamacpp_server_metrics(raw)
+        self.assertTrue(parsed["available"])
+        self.assertEqual(parsed["slot_n_ctx"], 131072)
+        self.assertEqual(parsed["slot_prompt_tokens"], 233)
+        self.assertEqual(parsed["update_slots_n_tokens"], 229)
+        self.assertEqual(parsed["update_slots_batch_tokens"], 229)
+        self.assertEqual(parsed["update_slots_progress"], 0.982833)
+        self.assertEqual(parsed["prompt_eval_ms"], 296.63)
+        self.assertEqual(parsed["prompt_eval_tokens"], 233)
+        self.assertEqual(parsed["prompt_eval_tokens_per_second"], 785.48)
+        self.assertEqual(parsed["eval_ms"], 16135.97)
+        self.assertEqual(parsed["eval_tokens"], 1056)
+        self.assertEqual(parsed["eval_tokens_per_second"], 65.44)
+        self.assertEqual(parsed["total_ms"], 16432.61)
+        self.assertEqual(parsed["total_tokens"], 1289)
+
     def test_extract_metrics_reads_dict_keyed_quality_benchmarks(self) -> None:
         data = {
             "meta": {
@@ -41,6 +66,16 @@ class VisualizeTests(unittest.TestCase):
                     "available": True,
                     "prompt_tokens_per_second": 20.1,
                     "generation_tokens_per_second": 11.4,
+                },
+                "llamacpp_server_metrics": {
+                    "prompt_eval_tokens_per_second": 785.48,
+                    "eval_tokens_per_second": 65.44,
+                    "prompt_eval_ms": 296.63,
+                    "eval_ms": 16135.97,
+                    "total_ms": 16432.61,
+                    "total_tokens": 1289,
+                    "slot_prompt_tokens": 233,
+                    "update_slots_progress": 0.982833,
                 },
                 "quality_benchmarks": {
                     "wikitext2_ppl": {
@@ -88,6 +123,10 @@ class VisualizeTests(unittest.TestCase):
         self.assertEqual(metrics["vram_peak"], 1300)
         self.assertEqual(metrics["peak_context_tokens"], 4096)
         self.assertEqual(metrics["total_context_tokens"], 6144)
+        self.assertEqual(metrics["llamacpp_prompt_eval_tps"], 785.48)
+        self.assertEqual(metrics["llamacpp_eval_tps"], 65.44)
+        self.assertEqual(metrics["llamacpp_slot_prompt_tokens"], 233)
+        self.assertEqual(metrics["llamacpp_update_slots_progress"], 0.982833)
 
     def test_extract_metrics_back_compat_reads_legacy_quality_benchmark(self) -> None:
         """Old JSONs with the singular `quality_benchmark` key keep rendering."""
@@ -128,6 +167,12 @@ class VisualizeTests(unittest.TestCase):
                     "hellaswag": {"available": True, "value": 62.4, "delta_vs_baseline": -0.0064},
                     "quality_tier": "excellent",
                 },
+                "llamacpp_server_metrics": {
+                    "prompt_eval_tokens_per_second": 785.48,
+                    "eval_tokens_per_second": 65.44,
+                    "slot_prompt_tokens": 233,
+                    "update_slots_progress": 0.982833,
+                },
             },
             "aggregate": {
                 "average_score": 0.95,
@@ -159,6 +204,11 @@ class VisualizeTests(unittest.TestCase):
         self.assertIn("640,000", html)
         self.assertIn("600,000", html)
         self.assertIn("not the same thing as single-turn active context", html)
+        self.assertIn("Prompt eval", html)
+        self.assertIn("785.5", html)
+        self.assertIn("65.4", html)
+        self.assertIn("233", html)
+        self.assertIn("98.3%", html)
 
     def test_agentic_results_have_suite_data_detects_empty_suite(self) -> None:
         self.assertFalse(agentic_results_have_suite_data({"f16": {"workflow_results": [], "diagnostics": []}}))

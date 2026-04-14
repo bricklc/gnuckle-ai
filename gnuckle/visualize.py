@@ -218,6 +218,8 @@ $acc_legend
           <th>Compression</th>
           <th>Prompt (t/s)</th>
           <th>Gen (t/s)</th>
+          <th>Prompt eval</th>
+          <th>Eval</th>
           <th>PPL WT2</th>
           <th>KLD vs f16</th>
           <th>HellaSwag</th>
@@ -229,6 +231,8 @@ $acc_legend
           <th>TTFT $num_turns (ms)</th>
           <th>Peak Ctx</th>
           <th>Total Ctx</th>
+          <th>slot prompt</th>
+          <th>update_slots</th>
           <th>VRAM peak (MB)</th>
           <th>Tool accuracy</th>
         </tr>
@@ -742,6 +746,31 @@ def extract_metrics(data):
     t1_tps = tps_list[0] if tps_list else 0
     tn_tps = tps_list[-1] if tps_list else 0
     degradation = round(100 * (tn_tps - t1_tps) / t1_tps, 1) if t1_tps else 0
+    server_metrics = (meta.get("llamacpp_server_metrics") or {}) if isinstance(meta, dict) else {}
+    prompt_eval_tps = aggregate.get("llamacpp_prompt_eval_tps")
+    if prompt_eval_tps is None:
+        prompt_eval_tps = server_metrics.get("prompt_eval_tokens_per_second")
+    eval_tps = aggregate.get("llamacpp_eval_tps")
+    if eval_tps is None:
+        eval_tps = server_metrics.get("eval_tokens_per_second")
+    prompt_eval_ms = aggregate.get("llamacpp_prompt_eval_ms")
+    if prompt_eval_ms is None:
+        prompt_eval_ms = server_metrics.get("prompt_eval_ms")
+    eval_ms = aggregate.get("llamacpp_eval_ms")
+    if eval_ms is None:
+        eval_ms = server_metrics.get("eval_ms")
+    total_ms = aggregate.get("llamacpp_total_ms")
+    if total_ms is None:
+        total_ms = server_metrics.get("total_ms")
+    total_tokens = aggregate.get("llamacpp_total_tokens")
+    if total_tokens is None:
+        total_tokens = server_metrics.get("total_tokens")
+    slot_prompt_tokens = aggregate.get("llamacpp_slot_prompt_tokens")
+    if slot_prompt_tokens is None:
+        slot_prompt_tokens = server_metrics.get("slot_prompt_tokens")
+    update_slots_progress = aggregate.get("llamacpp_update_slots_progress")
+    if update_slots_progress is None:
+        update_slots_progress = server_metrics.get("update_slots_progress")
 
     return {
         "prompt_tps_bench": throughput_benchmark.get("prompt_tokens_per_second"),
@@ -782,6 +811,14 @@ def extract_metrics(data):
             or aggregate.get("cumulative_context_tokens_estimate")
             or 0
         ),
+        "llamacpp_prompt_eval_tps": prompt_eval_tps,
+        "llamacpp_eval_tps": eval_tps,
+        "llamacpp_prompt_eval_ms": prompt_eval_ms,
+        "llamacpp_eval_ms": eval_ms,
+        "llamacpp_total_ms": total_ms,
+        "llamacpp_total_tokens": total_tokens,
+        "llamacpp_slot_prompt_tokens": slot_prompt_tokens,
+        "llamacpp_update_slots_progress": update_slots_progress,
         "num_turns": len(turns),
     }
 
@@ -1017,6 +1054,16 @@ def build_html(by_cache, model_name, timestamp, system_prompt_summary="system pr
       <div class="sub {'good' if hero_m['gen_tps_bench'] is not None else 'warn'}">llama-bench token generation</div>
     </div>""",
             f"""    <div class="mcard">
+      <div class="val">{format_num(hero_m["llamacpp_prompt_eval_tps"]) if hero_m["llamacpp_prompt_eval_tps"] is not None else 'n/a'}</div>
+      <div class="lbl">Prompt eval (t/s)</div>
+      <div class="sub {'good' if hero_m['llamacpp_prompt_eval_tps'] is not None else 'warn'}">{format_num(hero_m["llamacpp_prompt_eval_ms"], 0) if hero_m["llamacpp_prompt_eval_ms"] is not None else 'n/a'} ms llama.cpp server-side</div>
+    </div>""",
+            f"""    <div class="mcard">
+      <div class="val">{format_num(hero_m["llamacpp_eval_tps"]) if hero_m["llamacpp_eval_tps"] is not None else 'n/a'}</div>
+      <div class="lbl">Eval (t/s)</div>
+      <div class="sub {'good' if hero_m['llamacpp_eval_tps'] is not None else 'warn'}">{format_num(hero_m["llamacpp_eval_ms"], 0) if hero_m["llamacpp_eval_ms"] is not None else 'n/a'} ms llama.cpp server-side</div>
+    </div>""",
+            f"""    <div class="mcard">
       <div class="val">{format_num(hero_m["tps_t1"])}</div>
       <div class="lbl">runtime tok/s {escape(hero)}</div>
       <div class="sub {deg_class(hero_m["tps_t1"] - speed_compare_m["tps_t1"])}">vs {format_num(speed_compare_m["tps_t1"])} {escape(speed_compare)}</div>
@@ -1111,6 +1158,8 @@ def build_html(by_cache, model_name, timestamp, system_prompt_summary="system pr
           <td>{emphasis[0]}{(format_num(float(cache_compression(cache)), 1) + '&times;') if cache_compression(cache) != 'n/a' else 'n/a'}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["prompt_tps_bench"]) if m["prompt_tps_bench"] is not None else 'n/a'}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["gen_tps_bench"]) if m["gen_tps_bench"] is not None else 'n/a'}{emphasis[1]}</td>
+          <td>{emphasis[0]}{format_num(m["llamacpp_prompt_eval_tps"]) if m["llamacpp_prompt_eval_tps"] is not None else 'n/a'}{emphasis[1]} <span class="delta">{format_num(m["llamacpp_prompt_eval_ms"], 0) if m["llamacpp_prompt_eval_ms"] is not None else 'n/a'} ms</span></td>
+          <td>{emphasis[0]}{format_num(m["llamacpp_eval_tps"]) if m["llamacpp_eval_tps"] is not None else 'n/a'}{emphasis[1]} <span class="delta">{format_num(m["llamacpp_eval_ms"], 0) if m["llamacpp_eval_ms"] is not None else 'n/a'} ms</span></td>
           <td>{emphasis[0]}{format_num(m["wikitext2_perplexity"], 3) if m["wikitext2_perplexity"] is not None else 'n/a'} <span class="delta">{format_relative_delta(m["wikitext2_delta_vs_baseline"])}</span>{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["kld_mean"], 4) if m["kld_mean"] is not None else 'n/a'}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["hellaswag_accuracy"], 1) if m["hellaswag_accuracy"] is not None else 'n/a'} <span class="delta">{format_relative_delta(m["hellaswag_delta_vs_baseline"])}</span>{emphasis[1]}</td>
@@ -1122,6 +1171,8 @@ def build_html(by_cache, model_name, timestamp, system_prompt_summary="system pr
           <td>{emphasis[0]}{format_num(m["ttft_tn"], 0)}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["peak_context_tokens"], 0)}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["total_context_tokens"], 0)}{emphasis[1]}</td>
+          <td>{emphasis[0]}{format_num(m["llamacpp_slot_prompt_tokens"], 0) if m["llamacpp_slot_prompt_tokens"] is not None else 'n/a'}{emphasis[1]}</td>
+          <td>{emphasis[0]}{format_pct((m["llamacpp_update_slots_progress"] or 0) * 100, 1) if m["llamacpp_update_slots_progress"] is not None else 'n/a'}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_num(m["vram_peak"], 0)}{emphasis[1]}</td>
           <td>{emphasis[0]}{format_pct(m["acc_avg"])}{emphasis[1]}</td>
         </tr>"""
@@ -1295,6 +1346,7 @@ def build_agentic_html(data):
     token_usage = episode.get("token_usage", {})
     hardware_usage = episode.get("hardware_usage", {})
     tool_selection = episode.get("tool_selection", {})
+    llamacpp_metrics = (data.get("meta", {}) or {}).get("llamacpp_server_metrics", {}) or {}
     workflow = data.get("workflow", {})
     model_name = data.get("model_id", "unknown model")
     generated_at = data.get("generated_at", datetime.now().isoformat())
@@ -1369,6 +1421,16 @@ def build_agentic_html(data):
       <div class="val">{escape(str(token_counting.get('status', 'estimated')))}</div>
       <div class="lbl">token counting mode</div>
       <div class="sub">{escape(str(token_counting.get('primary_method', 'char/4 heuristic')))} · {escape(str(token_counting.get('secondary_method', 'tokenizer unavailable')))}</div>
+    </div>""",
+            f"""    <div class="mcard">
+      <div class="val">{format_num(llamacpp_metrics.get('prompt_eval_tokens_per_second')) if llamacpp_metrics.get('prompt_eval_tokens_per_second') is not None else 'n/a'}</div>
+      <div class="lbl">prompt eval (t/s)</div>
+      <div class="sub">{format_num(llamacpp_metrics.get('prompt_eval_ms'), 0) if llamacpp_metrics.get('prompt_eval_ms') is not None else 'n/a'} ms · slot {format_num(llamacpp_metrics.get('slot_prompt_tokens'), 0) if llamacpp_metrics.get('slot_prompt_tokens') is not None else 'n/a'} tok</div>
+    </div>""",
+            f"""    <div class="mcard">
+      <div class="val">{format_num(llamacpp_metrics.get('eval_tokens_per_second')) if llamacpp_metrics.get('eval_tokens_per_second') is not None else 'n/a'}</div>
+      <div class="lbl">eval (t/s)</div>
+      <div class="sub">{format_num(llamacpp_metrics.get('eval_ms'), 0) if llamacpp_metrics.get('eval_ms') is not None else 'n/a'} ms · update {format_pct(float(llamacpp_metrics.get('update_slots_progress', 0)) * 100, 1) if llamacpp_metrics.get('update_slots_progress') is not None else 'n/a'}</div>
     </div>""",
         ]
     )
@@ -2034,6 +2096,10 @@ def build_agentic_comparison_html_modern(by_cache: dict[str, dict]) -> str:
     leaderboard_rows = []
     for cache in ordered:
         summary = suite_summaries[cache]
+        meta_block = by_cache[cache].get("meta", {}) or {}
+        llamacpp_metrics = meta_block.get("llamacpp_server_metrics", {}) or {}
+        prompt_eval_tps = llamacpp_metrics.get("prompt_eval_tokens_per_second")
+        eval_tps = llamacpp_metrics.get("eval_tokens_per_second")
         composite_delta = float(summary.get("composite_score", 0) or 0) - float(baseline_summary.get("composite_score", 0) or 0)
         vram_peak = suite_vram_peak(cache)
         vram_delta = vram_peak - baseline_vram_peak if baseline_vram_peak or vram_peak else None
@@ -2047,6 +2113,8 @@ def build_agentic_comparison_html_modern(by_cache: dict[str, dict]) -> str:
             f"<td class='{delta_class(composite_delta)}'>{format_delta(composite_delta)}</td>"
             f"<td>{format_num(summary.get('core_score', 0), 3)}</td>"
             f"<td>{format_num(summary.get('profile_score', 0), 3) if summary.get('profile_score') is not None else 'n/a'}</td>"
+            f"<td>{format_num(prompt_eval_tps, 1) if prompt_eval_tps is not None else 'n/a'}</td>"
+            f"<td>{format_num(eval_tps, 1) if eval_tps is not None else 'n/a'}</td>"
             f"<td>{format_num(vram_peak, 0) if vram_peak else 'n/a'}<div class='delta {delta_class(-vram_delta if vram_delta is not None else None)}'>{format_delta(vram_delta, 0) if vram_delta is not None else 'n/a'}</div></td>"
             f"<td>{escape(flag_text)}</td>"
             "</tr>"
@@ -2193,9 +2261,9 @@ tr:last-child td {{ border-bottom: none; }}
   <section class="panel-grid">
     <div class="panel">
       <h2 class="section-title">Cache leaderboard</h2>
-      <p class="section-sub">Overall suite scores and direct delta against the {escape(baseline)} baseline.</p>
+      <p class="section-sub">Overall suite scores, llama.cpp eval throughput, and direct delta against the {escape(baseline)} baseline.</p>
       <table>
-        <tr><th>Cache</th><th>Type</th><th>Grade</th><th>Composite</th><th>Delta vs {escape(baseline)}</th><th>Core</th><th>Profile</th><th>VRAM peak</th><th>Flags</th></tr>
+        <tr><th>Cache</th><th>Type</th><th>Grade</th><th>Composite</th><th>Delta vs {escape(baseline)}</th><th>Core</th><th>Profile</th><th>Prompt eval</th><th>Eval</th><th>VRAM peak</th><th>Flags</th></tr>
         {''.join(leaderboard_rows)}
       </table>
     </div>
@@ -2335,6 +2403,7 @@ def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
         vram_peak = float(((summary.get("final_hardware") or {}).get("vram_peak_mb", 0)) or 0)
         meta_block = by_cache[cache].get("meta", {}) or {}
         quality_benchmarks = meta_block.get("quality_benchmarks", {}) or {}
+        llamacpp_metrics = meta_block.get("llamacpp_server_metrics", {}) or {}
         legacy_quality = meta_block.get("quality_benchmark")
         if legacy_quality and "wikitext2_ppl" not in quality_benchmarks:
             quality_benchmarks = {**quality_benchmarks, "wikitext2_ppl": legacy_quality}
@@ -2367,6 +2436,18 @@ def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
         semantic_gap_turns = int(summary.get("literal_semantic_gap_turn_count", 0) or 0)
         unsupported_claims = int(summary.get("unsupported_claim_count", 0) or 0)
         recovery_tries = int(summary.get("recovery_try_count", 0) or 0)
+        prompt_eval_tps = summary.get("llamacpp_prompt_eval_tps")
+        if prompt_eval_tps is None:
+            prompt_eval_tps = llamacpp_metrics.get("prompt_eval_tokens_per_second")
+        eval_tps = summary.get("llamacpp_eval_tps")
+        if eval_tps is None:
+            eval_tps = llamacpp_metrics.get("eval_tokens_per_second")
+        slot_prompt_tokens = summary.get("llamacpp_slot_prompt_tokens")
+        if slot_prompt_tokens is None:
+            slot_prompt_tokens = llamacpp_metrics.get("slot_prompt_tokens")
+        update_slots_progress = summary.get("llamacpp_update_slots_progress")
+        if update_slots_progress is None:
+            update_slots_progress = llamacpp_metrics.get("update_slots_progress")
         delta_score = avg_score - float(baseline_agg.get("average_score", 0) or 0)
         table_rows.append(
             "<tr>"
@@ -2384,6 +2465,10 @@ def build_session_comparison_html(by_cache: dict[str, dict]) -> str:
             f"<td>{peak_context_label}</td>"
             f"<td>{format_num(cumulative_context_tokens, 0)}</td>"
             f"<td>{format_num(provider_total_tokens, 0)}</td>"
+            f"<td>{format_num(prompt_eval_tps, 1) if prompt_eval_tps is not None else 'n/a'}</td>"
+            f"<td>{format_num(eval_tps, 1) if eval_tps is not None else 'n/a'}</td>"
+            f"<td>{format_num(slot_prompt_tokens, 0) if slot_prompt_tokens is not None else 'n/a'}</td>"
+            f"<td>{format_pct(float(update_slots_progress) * 100, 1) if update_slots_progress is not None else 'n/a'}</td>"
             f"<td>{format_pct(format_obedience * 100, 1)}</td>"
             f"<td>{semantic_gap_turns}</td>"
             f"<td>{unsupported_claims}</td>"
@@ -2550,9 +2635,9 @@ td.delta-down {{ background: rgba(180,35,24,0.06); }}
   <section class="panel-grid">
     <div class="panel">
       <h2 class="section-title">Cache leaderboard</h2>
-      <p class="section-sub">Session score, pass rate, elapsed time, standard quality packs, peak active context, cumulative context load, cumulative provider tokens, formatting obedience, semantic-gap count, unsupported claims, recovery tries, and VRAM peak by quant.</p>
+      <p class="section-sub">Session score, pass rate, elapsed time, standard quality packs, peak active context, cumulative context load, cumulative provider tokens, llama.cpp prompt/eval timings, update_slots state, formatting obedience, semantic-gap count, unsupported claims, recovery tries, and VRAM peak by quant.</p>
       <table>
-        <tr><th>Cache</th><th>Avg score</th><th>Pass rate</th><th>Passes</th><th>Time (s)</th><th>PPL WT2</th><th>KLD vs f16</th><th>HellaSwag</th><th>Tier</th><th>Peak Ctx</th><th>Total Ctx</th><th>Provider tokens</th><th>Fmt obey</th><th>Lit→Sem gaps</th><th>Unsupported</th><th>Recovery tries</th><th>VRAM peak</th><th>Delta vs {escape(baseline)}</th></tr>
+        <tr><th>Cache</th><th>Avg score</th><th>Pass rate</th><th>Passes</th><th>Time (s)</th><th>PPL WT2</th><th>KLD vs f16</th><th>HellaSwag</th><th>Tier</th><th>Peak Ctx</th><th>Total Ctx</th><th>Provider tokens</th><th>Prompt eval</th><th>Eval</th><th>slot prompt</th><th>update_slots</th><th>Fmt obey</th><th>Lit→Sem gaps</th><th>Unsupported</th><th>Recovery tries</th><th>VRAM peak</th><th>Delta vs {escape(baseline)}</th></tr>
         {''.join(table_rows)}
       </table>
     </div>

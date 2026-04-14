@@ -11,6 +11,8 @@ import os
 import signal
 import socket
 import copy
+import re
+import threading
 import webbrowser
 from pathlib import Path
 from datetime import datetime
@@ -53,6 +55,7 @@ SERVER_WAIT_S    = 60
 WARMUP_WAIT_S    = 120
 PRESETS_PATH     = Path(__file__).with_name("llama_presets.json")
 DEFAULT_SYSTEM_PROMPT = FALLBACK_SYSTEM_PROMPT
+SERVER_LOG_LINE_LIMIT = 2000
 
 # ── TOOL DEFINITIONS ──────────────────────────────────────────────────────────
 TOOLS = [
@@ -864,6 +867,124 @@ def _post_json(url: str, payload: dict) -> dict | None:
         return None
 
 
+def _pump_server_logs(pipe, sink: deque) -> None:
+    try:
+        for line in iter(pipe.readline, ""):
+            if not line:
+                break
+            sink.append(line.rstrip("\r\n"))
+    except Exception:
+        pass
+    finally:
+        try:
+            pipe.close()
+        except Exception:
+            pass
+
+
+def parse_llamacpp_server_metrics(log_text: str) -> dict:
+    metrics = {
+        "prompt_eval_ms": None,
+        "prompt_eval_tokens": None,
+        "prompt_eval_ms_per_token": None,
+        "prompt_eval_tokens_per_second": None,
+        "eval_ms": None,
+        "eval_tokens": None,
+        "eval_ms_per_token": None,
+        "eval_tokens_per_second": None,
+        "total_ms": None,
+        "total_tokens": None,
+        "slot_prompt_tokens": None,
+        "slot_n_ctx": None,
+        "update_slots_n_tokens": None,
+        "update_slots_batch_tokens": None,
+        "update_slots_progress": None,
+    }
+    text = str(log_text or "")
+    timing_re = re.compile(
+        r"(?P<label>prompt eval time|eval time|total time)\s*=\s*"
+        r"(?P<ms>[0-9]+(?:\.[0-9]+)?)\s*ms\s*/\s*"
+        r"(?P<tokens>[0-9]+)\s*tokens"
+        r"(?:\s*\(\s*(?P<ms_per_token>[0-9]+(?:\.[0-9]+)?)\s*ms per token,\s*"
+        r"(?P<tps>[0-9]+(?:\.[0-9]+)?)\s*tokens per second\))?",
+        re.IGNORECASE,
+    )
+    launch_re = re.compile(
+        r"slot launch_slot_:\s*id\s+\d+\s+\|\s+task\s+[-\d]+\s+\|\s+new prompt,\s*"
+        r"n_ctx_slot\s*=\s*(?P<n_ctx>[0-9]+).*?task\.n_tokens\s*=\s*(?P<n_tokens>[0-9]+)",
+        re.IGNORECASE,
+    )
+    update_re = re.compile(
+        r"slot update_slots:.*?n_tokens\s*=\s*(?P<n_tokens>[0-9]+)"
+        r"(?:,\s*batch\.n_tokens\s*=\s*(?P<batch>[0-9]+))?"
+        r"(?:,\s*progress\s*=\s*(?P<progress>[0-9]+(?:\.[0-9]+)?))?",
+        re.IGNORECASE,
+    )
+
+    for match in timing_re.finditer(text):
+        label = match.group("label").lower()
+        ms = float(match.group("ms"))
+        tokens = int(match.group("tokens"))
+        ms_per_token = match.group("ms_per_token")
+        tps = match.group("tps")
+        if label == "prompt eval time":
+            metrics["prompt_eval_ms"] = ms
+            metrics["prompt_eval_tokens"] = tokens
+            metrics["prompt_eval_ms_per_token"] = float(ms_per_token) if ms_per_token is not None else None
+            metrics["prompt_eval_tokens_per_second"] = float(tps) if tps is not None else None
+        elif label == "eval time":
+            metrics["eval_ms"] = ms
+            metrics["eval_tokens"] = tokens
+            metrics["eval_ms_per_token"] = float(ms_per_token) if ms_per_token is not None else None
+            metrics["eval_tokens_per_second"] = float(tps) if tps is not None else None
+        elif label == "total time":
+            metrics["total_ms"] = ms
+            metrics["total_tokens"] = tokens
+
+    for match in launch_re.finditer(text):
+        metrics["slot_n_ctx"] = int(match.group("n_ctx"))
+        metrics["slot_prompt_tokens"] = int(match.group("n_tokens"))
+
+    for match in update_re.finditer(text):
+        metrics["update_slots_n_tokens"] = int(match.group("n_tokens"))
+        batch = match.group("batch")
+        progress = match.group("progress")
+        metrics["update_slots_batch_tokens"] = int(batch) if batch is not None else None
+        metrics["update_slots_progress"] = float(progress) if progress is not None else None
+
+    metrics["available"] = any(value is not None for key, value in metrics.items() if key != "available")
+    return metrics
+
+
+def collect_llamacpp_server_metrics(proc) -> dict:
+    lines = list(getattr(proc, "gnuckle_log_lines", []) or [])
+    metrics = parse_llamacpp_server_metrics("\n".join(lines))
+    metrics["captured_lines"] = len(lines)
+    return metrics
+
+
+def _attach_llamacpp_server_metrics(result_path: Path, server_metrics: dict) -> None:
+    if not result_path or not result_path.is_file():
+        return
+    try:
+        data = json.loads(result_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    meta = data.setdefault("meta", {})
+    meta["llamacpp_server_metrics"] = server_metrics or {}
+    aggregate = data.get("aggregate")
+    if isinstance(aggregate, dict):
+        aggregate["llamacpp_prompt_eval_tps"] = server_metrics.get("prompt_eval_tokens_per_second")
+        aggregate["llamacpp_eval_tps"] = server_metrics.get("eval_tokens_per_second")
+        aggregate["llamacpp_prompt_eval_ms"] = server_metrics.get("prompt_eval_ms")
+        aggregate["llamacpp_eval_ms"] = server_metrics.get("eval_ms")
+        aggregate["llamacpp_total_ms"] = server_metrics.get("total_ms")
+        aggregate["llamacpp_total_tokens"] = server_metrics.get("total_tokens")
+        aggregate["llamacpp_slot_prompt_tokens"] = server_metrics.get("slot_prompt_tokens")
+        aggregate["llamacpp_update_slots_progress"] = server_metrics.get("update_slots_progress")
+    result_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
 def llamacpp_tokenizer_label() -> str:
     return "llama.cpp exact"
 
@@ -1646,10 +1767,21 @@ def start_server(server_path: Path, model_path: Path, cache_k: str, cache_v: str
         kwargs["preexec_fn"] = os.setsid
     proc = subprocess.Popen(
         cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
         **kwargs
     )
+    proc.gnuckle_log_lines = deque(maxlen=SERVER_LOG_LINE_LIMIT)
+    proc.gnuckle_log_thread = threading.Thread(
+        target=_pump_server_logs,
+        args=(proc.stdout, proc.gnuckle_log_lines),
+        daemon=True,
+    )
+    proc.gnuckle_log_thread.start()
     return proc
 
 # ── VRAM ──────────────────────────────────────────────────────────────────────
@@ -1788,7 +1920,7 @@ def call_with_metrics(client, messages, port, preset=None, base_url: str | None 
 # ── SINGLE CACHE-TYPE RUN ─────────────────────────────────────────────────────
 def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, preset=None, system_prompt=None,
                        system_prompt_source="custom_inline", split_config=None, throughput_benchmark=None,
-                       quality_benchmarks=None):
+                       quality_benchmarks=None, llamacpp_server_metrics=None):
     base_url = DEFAULT_BASE_URL.format(port=port)
     client   = OpenAI(base_url=base_url, api_key=API_KEY)
     exact_available = probe_llamacpp_exact(base_url)
@@ -1816,6 +1948,7 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "split_config": split_config,
             "throughput_benchmark": throughput_benchmark or {},
             "quality_benchmarks": quality_benchmarks or {},
+            "llamacpp_server_metrics": llamacpp_server_metrics or {},
         },
         "turns": [],
         "aggregate": {
@@ -1846,6 +1979,14 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
             "prompt_tokens_per_second_bench": None,
             "generation_tokens_per_second_bench": None,
             "wikitext2_perplexity": None,
+            "llamacpp_prompt_eval_tps": None,
+            "llamacpp_eval_tps": None,
+            "llamacpp_prompt_eval_ms": None,
+            "llamacpp_eval_ms": None,
+            "llamacpp_total_ms": None,
+            "llamacpp_total_tokens": None,
+            "llamacpp_slot_prompt_tokens": None,
+            "llamacpp_update_slots_progress": None,
         },
     }
     if throughput_benchmark:
@@ -1854,6 +1995,15 @@ def run_benchmark_pass(cache_label, model_path, output_dir, num_turns, port, pre
     wikitext2_metrics = (quality_benchmarks or {}).get("wikitext2_ppl") or {}
     if wikitext2_metrics:
         results["aggregate"]["wikitext2_perplexity"] = wikitext2_metrics.get("perplexity")
+    if llamacpp_server_metrics:
+        results["aggregate"]["llamacpp_prompt_eval_tps"] = llamacpp_server_metrics.get("prompt_eval_tokens_per_second")
+        results["aggregate"]["llamacpp_eval_tps"] = llamacpp_server_metrics.get("eval_tokens_per_second")
+        results["aggregate"]["llamacpp_prompt_eval_ms"] = llamacpp_server_metrics.get("prompt_eval_ms")
+        results["aggregate"]["llamacpp_eval_ms"] = llamacpp_server_metrics.get("eval_ms")
+        results["aggregate"]["llamacpp_total_ms"] = llamacpp_server_metrics.get("total_ms")
+        results["aggregate"]["llamacpp_total_tokens"] = llamacpp_server_metrics.get("total_tokens")
+        results["aggregate"]["llamacpp_slot_prompt_tokens"] = llamacpp_server_metrics.get("slot_prompt_tokens")
+        results["aggregate"]["llamacpp_update_slots_progress"] = llamacpp_server_metrics.get("update_slots_progress")
 
     messages = [
         {
@@ -2283,7 +2433,8 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
                                trace_style: str = "theater",
                                selected_workflow_ids=None,
                                throughput_benchmark=None,
-                               quality_benchmarks=None):
+                               quality_benchmarks=None,
+                               llamacpp_server_metrics=None):
     from gnuckle.agentic_runtime import run_agentic_episode
     from gnuckle.benchmark_scoring import aggregate_workflow_runs, assign_type, finalize_benchmark_summary
     from gnuckle.workflow_loader import load_workflow_suite
@@ -2410,6 +2561,7 @@ def run_agentic_benchmark_pass(cache_label, model_path, output_dir, port, preset
     summary["meta"]["cache_label"] = cache_label
     summary["meta"]["throughput_benchmark"] = throughput_benchmark or {}
     summary["meta"]["quality_benchmarks"] = quality_benchmarks or {}
+    summary["meta"]["llamacpp_server_metrics"] = llamacpp_server_metrics or {}
     out_path = output_dir / f"agentic_{sanitize_label(cache_label)}.json"
     out_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print_step(f"saved: {out_path.name}")
@@ -2860,6 +3012,8 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
             cache_v = cfg["cache_v"]
             throughput_benchmark = {}
             quality_benchmarks = {}
+            llamacpp_server_metrics = {}
+            cache_output_paths = []
 
             render_progress(f"cache run {i + 1}/{len(cache_configs)} ({label})", i, len(cache_configs), done=False)
             print_header(f"Run {i+1}/{len(cache_configs)}: {label}  (cache-k={cache_k} cache-v={cache_v})")
@@ -2968,6 +3122,7 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                         selected_workflow_ids=selected_workflow_ids,
                         throughput_benchmark=throughput_benchmark,
                         quality_benchmarks=quality_benchmarks,
+                        llamacpp_server_metrics=llamacpp_server_metrics,
                     )
 
                     # Run selected session benchmarks after workflow pass
@@ -2996,7 +3151,9 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                                 session_out["meta"]["cache_label"] = label
                                 session_out["meta"]["throughput_benchmark"] = throughput_benchmark
                                 session_out["meta"]["quality_benchmarks"] = quality_benchmarks
+                                session_out["meta"]["llamacpp_server_metrics"] = llamacpp_server_metrics
                                 session_path.write_text(json.dumps(session_out, indent=2, default=str), encoding="utf-8")
+                                cache_output_paths.append(session_path)
                                 print_step(f"session benchmark saved: {session_path.name}")
                             except Exception as se:
                                 print(f"  ERROR during session benchmark [{bench['id']}]: {se}")
@@ -3025,8 +3182,10 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                             session_out["meta"]["cache_label"] = label
                             session_out["meta"]["throughput_benchmark"] = throughput_benchmark
                             session_out["meta"]["quality_benchmarks"] = quality_benchmarks
+                            session_out["meta"]["llamacpp_server_metrics"] = llamacpp_server_metrics
                             session_path = output_path / f"session_{bench['id']}_{sanitize_label(label)}.json"
                             session_path.write_text(json.dumps(session_out, indent=2, default=str), encoding="utf-8")
+                            cache_output_paths.append(session_path)
                             out = session_path
                             print_step(f"session benchmark saved: {session_path.name}")
                         except Exception as se:
@@ -3045,8 +3204,26 @@ def run_full_benchmark(benchmark_mode=None, model_path=None, server_path=None, s
                         split_config=split_config,
                         throughput_benchmark=throughput_benchmark,
                         quality_benchmarks=quality_benchmarks,
+                        llamacpp_server_metrics=llamacpp_server_metrics,
                     )
                 if out is not None:
+                    llamacpp_server_metrics = collect_llamacpp_server_metrics(server_proc)
+                    if llamacpp_server_metrics.get("available"):
+                        print_step(
+                            "llama.cpp server metrics: "
+                            f"prompt_eval={llamacpp_server_metrics.get('prompt_eval_ms')} ms "
+                            f"({llamacpp_server_metrics.get('prompt_eval_tokens_per_second')} t/s) "
+                            f"eval={llamacpp_server_metrics.get('eval_ms')} ms "
+                            f"({llamacpp_server_metrics.get('eval_tokens_per_second')} t/s)"
+                        )
+                        print_step(
+                            "llama.cpp slot metrics: "
+                            f"slot_prompt_tokens={llamacpp_server_metrics.get('slot_prompt_tokens')} "
+                            f"total_tokens={llamacpp_server_metrics.get('total_tokens')} "
+                            f"update_slots_progress={llamacpp_server_metrics.get('update_slots_progress')}"
+                        )
+                    for path in [out, *cache_output_paths]:
+                        _attach_llamacpp_server_metrics(path, llamacpp_server_metrics)
                     output_files.append(out)
             except Exception as e:
                 print(f"  ERROR during benchmark [{label}]: {e}")
