@@ -13,6 +13,7 @@ from gnuckle.menu import (
     render_banana_loading_bar,
     render_menu_summary,
     run_benchmark_from_menu_state,
+    run_playground_from_menu_state,
 )
 from gnuckle.profile import list_profiles, load_profile, profiles_dir, save_profile
 
@@ -37,25 +38,30 @@ class MenuTests(unittest.TestCase):
         state["sampler_preset"] = "nemotron"
         state["sampler"] = {"temp": 0.7}
         state["quality_bench_ids"] = ["wikitext2_ppl"]
+        state["playground_pretend_tools"] = True
         profile = menu_state_to_profile(state)
         self.assertEqual(profile["benchmark_mode"], "agentic")
         self.assertEqual(profile["sampler_preset"], "nemotron")
         self.assertEqual(profile["quality_bench_ids"], ["wikitext2_ppl"])
+        self.assertTrue(profile["playground_pretend_tools"])
 
         merged = _apply_profile_to_state(default_menu_state(), profile)
         self.assertEqual(merged["mode"], "agentic")
         self.assertEqual(merged["sampler_preset"], "nemotron")
         self.assertEqual(merged["quality_bench_ids"], ["wikitext2_ppl"])
+        self.assertTrue(merged["playground_pretend_tools"])
 
     def test_render_menu_summary_surfaces_key_choices(self) -> None:
         state = default_menu_state()
         state["model_path"] = "C:/models/demo.gguf"
         state["server_path"] = "C:/bin/llama-server.exe"
         state["quality_bench_ids"] = ["wikitext2_ppl"]
+        state["playground_pretend_tools"] = True
         summary = render_menu_summary(state)
         self.assertIn("model=demo.gguf", summary)
         self.assertIn("server=llama-server.exe", summary)
         self.assertIn("quality=wikitext2_ppl", summary)
+        self.assertIn("playground=tools:on", summary)
 
     def test_profile_save_and_list_helpers_round_trip(self) -> None:
         target = profiles_dir() / "menu-test.json"
@@ -84,6 +90,20 @@ class MenuTests(unittest.TestCase):
         kwargs = mocked.call_args.kwargs
         self.assertEqual(kwargs["cache_labels"], ["f16", "turbo3"])
         self.assertEqual(kwargs["quality_bench_ids"], ["wikitext2_ppl"])
+
+    def test_run_playground_from_menu_state_forwards_pretend_tools(self) -> None:
+        state = default_menu_state()
+        state["model_path"] = "C:/models/demo.gguf"
+        state["server_path"] = "C:/bin/llama-server.exe"
+        state["cache_types"] = ["turbo3"]
+        state["playground_pretend_tools"] = True
+        with patch("gnuckle.menu.run_playground") as mocked:
+            run_playground_from_menu_state(state)
+        kwargs = mocked.call_args.kwargs
+        self.assertEqual(kwargs["model_path"], "C:/models/demo.gguf")
+        self.assertEqual(kwargs["server_path"], "C:/bin/llama-server.exe")
+        self.assertEqual(kwargs["cache_label"], "turbo3")
+        self.assertTrue(kwargs["pretend_tools"])
 
     def test_pick_quality_packs_includes_available_registry_entries_even_when_installed_exists(self) -> None:
         state = default_menu_state()

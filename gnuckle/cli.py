@@ -64,6 +64,27 @@ def cmd_menu(_args):
     run_interactive_menu()
 
 
+def cmd_playground(args):
+    from gnuckle.benchmark import select_preset
+    from gnuckle.playground import run_playground
+
+    preset = None
+    if args.model:
+        from pathlib import Path
+
+        preset = select_preset(Path(args.model), preset_name=args.preset)
+    run_playground(
+        model_path=args.model,
+        server_path=args.server,
+        output_dir=args.output,
+        port=args.port,
+        preset=preset,
+        cache_label=args.cache,
+        pretend_tools=args.pretend_tools,
+        use_jinja=not args.no_jinja,
+    )
+
+
 def cmd_update(_args):
     """Update gnuckle in place."""
     from gnuckle.update import run_update
@@ -311,6 +332,22 @@ def main():
         description="Interactive model/profile/benchmark picker with save-and-run flow.",
     )
     menu.set_defaults(func=cmd_menu)
+
+    playground = subparsers.add_parser(
+        "playground",
+        aliases=["chat"],
+        help="load a model for interactive theater-style chat",
+        description="Open a gnuckle playground chat against llama.cpp, optionally with pretend benchmark tools.",
+    )
+    playground.add_argument("--model", "-m", required=True, help="path to .gguf model file")
+    playground.add_argument("--server", "-s", required=True, help="path to llama-server executable")
+    playground.add_argument("--output", "-o", default=None, help="output directory for playground transcript JSON")
+    playground.add_argument("--port", "-p", type=int, default=8080, help="llama-server port")
+    playground.add_argument("--preset", default=None, help="sampler preset name")
+    playground.add_argument("--cache", default="f16", help="cache label to use for playground load")
+    playground.add_argument("--pretend-tools", action="store_true", help="enable mock benchmark tools in chat")
+    playground.add_argument("--no-jinja", action="store_true", help="disable --jinja when launching llama-server")
+    playground.set_defaults(func=cmd_playground)
 
     if argcomplete is not None:
         argcomplete.autocomplete(parser)

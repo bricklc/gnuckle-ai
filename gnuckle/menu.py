@@ -23,6 +23,7 @@ from gnuckle.benchmark import (
     run_full_benchmark,
     select_preset,
 )
+from gnuckle.playground import run_playground
 from gnuckle.profile import list_profiles, load_profile, profiles_dir, save_profile
 from gnuckle.splash import print_splash
 
@@ -465,6 +466,7 @@ def menu_state_to_profile(state: dict) -> dict:
         "session_bench_ids": state.get("session_bench_ids"),
         "quality_bench_ids": state.get("quality_bench_ids"),
         "skip_quality": bool(state.get("skip_quality")),
+        "playground_pretend_tools": bool(state.get("playground_pretend_tools")),
         "use_jinja": bool(state.get("use_jinja", True)),
     }
 
@@ -488,6 +490,7 @@ def _apply_profile_to_state(state: dict, profile: dict) -> dict:
     updated["session_bench_ids"] = profile.get("session_bench_ids", updated["session_bench_ids"])
     updated["quality_bench_ids"] = profile.get("quality_bench_ids", updated["quality_bench_ids"])
     updated["skip_quality"] = profile.get("skip_quality", updated["skip_quality"])
+    updated["playground_pretend_tools"] = profile.get("playground_pretend_tools", updated["playground_pretend_tools"])
     updated["use_jinja"] = profile.get("use_jinja", updated["use_jinja"])
     return updated
 
@@ -511,6 +514,7 @@ def default_menu_state() -> dict:
         "session_bench_ids": None,
         "quality_bench_ids": [],
         "skip_quality": False,
+        "playground_pretend_tools": False,
         "use_jinja": True,
     }
 
@@ -520,9 +524,10 @@ def render_menu_summary(state: dict) -> str:
     server = Path(state["server_path"]).name if state.get("server_path") else "auto"
     preset = state.get("sampler_preset") or "auto"
     quality = ",".join(state.get("quality_bench_ids") or []) or ("skip" if state.get("skip_quality") else "auto")
+    playground_tools = "tools:on" if state.get("playground_pretend_tools") else "tools:off"
     return (
         f"mode={state['mode']} | model={model} | server={server} | preset={preset} | "
-        f"cache={','.join(state['cache_types'])} | quality={quality}"
+        f"cache={','.join(state['cache_types'])} | quality={quality} | playground={playground_tools}"
     )
 
 
@@ -553,6 +558,24 @@ def _configure_benchmarks(state: dict) -> None:
         state["session_bench_ids"] = None
 
 
+def _pick_playground_tools(state: dict) -> bool:
+    options = [
+        {"label": "pretend tools off", "detail": "plain chat; no tool calls exposed"},
+        {"label": "pretend tools on", "detail": "model may call benchmark mock tools; no real side effects"},
+    ]
+    selected = 1 if state.get("playground_pretend_tools") else 0
+    choice = _arrow_select(
+        "Playground Tool Mode",
+        options,
+        summary=render_menu_summary(state),
+        selected={selected},
+        allow_escape=True,
+    )
+    if choice is None:
+        return bool(state.get("playground_pretend_tools"))
+    return int(choice) == 1
+
+
 def run_interactive_menu() -> None:
     if not _is_interactive_terminal():
         raise SystemExit("interactive menu requires a TTY")
@@ -570,6 +593,7 @@ def run_interactive_menu() -> None:
             {"label": "Edit temps / sampler overrides", "detail": "manual temp, top-p, top-k, repeat penalties"},
             {"label": "Select benchmarks", "detail": f"{state['mode']} | {','.join(state['cache_types'])}"},
             {"label": "Save preferences", "detail": "write current menu state to ~/.gnuckle/profiles"},
+            {"label": "Test model in playground", "detail": "load selected model into theater chat"},
             {"label": "Run benchmark", "detail": "launch benchmark with current selection"},
             {"label": "Exit", "detail": "leave menu"},
         ]
@@ -608,6 +632,16 @@ def run_interactive_menu() -> None:
             input("\npress Enter to continue...")
         elif choice == 6:
             if not state.get("model_path"):
+                _render_screen("Playground", ["select a model first."], summary=render_menu_summary(state))
+                input("\npress Enter to continue...")
+                continue
+            state["playground_pretend_tools"] = _pick_playground_tools(state)
+            _clear_screen()
+            print_splash()
+            run_playground_from_menu_state(state)
+            return
+        elif choice == 7:
+            if not state.get("model_path"):
                 _render_screen("Run Benchmark", ["select a model first."], summary=render_menu_summary(state))
                 input("\npress Enter to continue...")
                 continue
@@ -637,4 +671,34 @@ def run_benchmark_from_menu_state(state: dict) -> None:
         cache_labels=state.get("cache_types"),
         quality_bench_ids=state.get("quality_bench_ids"),
         skip_quality=state.get("skip_quality", False),
+    )
+
+
+def run_playground_from_menu_state(state: dict):
+    server_path = state.get("server_path")
+    if not server_path and state.get("model_path"):
+        auto_server = _auto_detect_server(
+            Path(state["model_path"]),
+            Path(state["scan_dir"]) if state.get("scan_dir") else None,
+        )
+        server_path = str(auto_server) if auto_server is not None else None
+    if not server_path:
+        raise SystemExit("playground needs a llama-server path")
+
+    preset = select_preset(
+        Path(state["model_path"]),
+        preset_name=state.get("sampler_preset"),
+        sampler_overrides=state.get("sampler"),
+    )
+    cache_labels = state.get("cache_types") or ["f16"]
+    return run_playground(
+        model_path=state["model_path"],
+        server_path=server_path,
+        output_dir=state.get("output_dir"),
+        port=state.get("port") or DEFAULT_PORT,
+        preset=preset,
+        cache_label=cache_labels[0],
+        pretend_tools=bool(state.get("playground_pretend_tools")),
+        use_jinja=state.get("use_jinja", True),
+        split_config=state.get("split_config"),
     )
